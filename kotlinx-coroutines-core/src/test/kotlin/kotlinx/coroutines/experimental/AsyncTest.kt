@@ -16,15 +16,15 @@
 
 package kotlinx.coroutines.experimental
 
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
-import org.junit.Assert.*
 
 class AsyncTest : TestBase() {
     @Test
     fun testSimple(): Unit = runBlocking {
         expect(1)
-        val d = async(context) {
+        val d = async(coroutineContext) {
             expect(3)
             42
         }
@@ -40,7 +40,7 @@ class AsyncTest : TestBase() {
     @Test
     fun testUndispatched(): Unit = runBlocking {
         expect(1)
-        val d = async(context, start = CoroutineStart.UNDISPATCHED) {
+        val d = async(coroutineContext, start = CoroutineStart.UNDISPATCHED) {
             expect(2)
             42
         }
@@ -53,7 +53,7 @@ class AsyncTest : TestBase() {
     @Test(expected = IOException::class)
     fun testSimpleException(): Unit = runBlocking {
         expect(1)
-        val d = async(context) {
+        val d = async(coroutineContext) {
             finish(3)
             throw IOException()
         }
@@ -64,7 +64,7 @@ class AsyncTest : TestBase() {
     @Test(expected = IOException::class)
     fun testDeferAndYieldException(): Unit = runBlocking {
         expect(1)
-        val d = async(context) {
+        val d = async(coroutineContext) {
             expect(3)
             yield() // no effect, parent waiting
             finish(4)
@@ -77,20 +77,20 @@ class AsyncTest : TestBase() {
     @Test
     fun testDeferWithTwoWaiters() = runBlocking {
         expect(1)
-        val d = async(context) {
+        val d = async(coroutineContext) {
             expect(5)
             yield()
             expect(9)
             42
         }
         expect(2)
-        launch(context) {
+        launch(coroutineContext) {
             expect(6)
             check(d.await() == 42)
             expect(11)
         }
         expect(3)
-        launch(context) {
+        launch(coroutineContext) {
             expect(7)
             check(d.await() == 42)
             expect(12)
@@ -104,6 +104,40 @@ class AsyncTest : TestBase() {
         finish(13)
     }
 
+    @Test
+    fun testAsyncWithFinally() = runBlocking {
+        expect(1)
+        val d = async<String>(coroutineContext) {
+            expect(3)
+            try {
+                yield() // to main, will cancel
+            } finally {
+                expect(6) // will go there on await
+                return@async "Fail" // result will not override cancellation
+            }
+            expectUnreached()
+            "Fail2"
+        }
+        expect(2)
+        yield() // to async
+        expect(4)
+        check(d.isActive && !d.isCompleted && !d.isCompletedExceptionally && !d.isCancelled)
+        check(d.cancel())
+        check(!d.isActive && !d.isCompleted && !d.isCompletedExceptionally && d.isCancelled)
+        check(!d.cancel()) // second attempt returns false
+        check(!d.isActive && !d.isCompleted && !d.isCompletedExceptionally && d.isCancelled)
+        expect(5)
+        try {
+            d.await() // awaits
+            expectUnreached() // does not complete normally
+        } catch (e: Throwable) {
+            expect(7)
+            check(e is CancellationException)
+        }
+        check(!d.isActive && d.isCompleted && d.isCompletedExceptionally && d.isCancelled)
+        finish(8)
+    }
+
     class BadClass {
         override fun equals(other: Any?): Boolean = error("equals")
         override fun hashCode(): Int = error("hashCode")
@@ -113,7 +147,7 @@ class AsyncTest : TestBase() {
     @Test
     fun testDeferBadClass() = runBlocking {
         val bad = BadClass()
-        val d = async(context) {
+        val d = async(coroutineContext) {
             expect(1)
             bad
         }

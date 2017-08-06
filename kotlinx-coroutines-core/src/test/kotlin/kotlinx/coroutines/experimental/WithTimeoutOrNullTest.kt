@@ -29,7 +29,7 @@ class WithTimeoutOrNullTest : TestBase() {
     @Test
     fun testDispatch() = runBlocking {
         expect(1)
-        launch(context) {
+        launch(coroutineContext) {
             expect(4)
             yield() // back to main
             expect(7)
@@ -136,6 +136,23 @@ class WithTimeoutOrNullTest : TestBase() {
             }
         }
         assertThat(result, IsNull())
-        assertThat(counter, IsEqual(2))
+        // under load counter may be equal to 1, so the check is lenient here
+        println("Executed: $counter times")
+        check(counter in 1..2)
+    }
+
+    @Test
+    fun testOuterTimeoutFiredBeforeInner() = runBlocking<Unit> {
+        val result = withTimeoutOrNull(100) {
+            Thread.sleep(200) // wait enough for outer timeout to fire
+            run(NonCancellable) { yield() } // give an event loop a chance to run and process that cancellation
+            withTimeoutOrNull(100) {
+                yield() // will cancel because of outer timeout
+                expectUnreached()
+            }
+            expectUnreached() // should not be reached, because it is outer timeout
+        }
+        // outer timeout results in null
+        assertThat(result, IsNull())
     }
 }

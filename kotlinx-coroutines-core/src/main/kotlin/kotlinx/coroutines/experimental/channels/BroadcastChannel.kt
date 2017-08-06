@@ -22,32 +22,24 @@ import java.io.Closeable
 
 /**
  * Broadcast channel is a non-blocking primitive for communication between the sender and multiple receivers
- * that subscribe for the elements using [open] function and unsubscribe using [SubscriptionReceiveChannel.close]
+ * that subscribe for the elements using [openSubscription] function and unsubscribe using [SubscriptionReceiveChannel.close]
  * function.
  *
- * See [BroadcastChannel()][BroadcastChannel.invoke] factory function for the description of available
+ * See `BroadcastChannel()` factory function for the description of available
  * broadcast channel implementations.
  */
 public interface BroadcastChannel<E> : SendChannel<E> {
     /**
      * Factory for broadcast channels.
+     * @suppress **Deprecated**
      */
     public companion object Factory {
         /**
          * Creates a broadcast channel with the specified buffer capacity.
-         *
-         * The resulting channel type depends on the specified [capacity] parameter:
-         * * when `capacity` positive, but less than [UNLIMITED] -- creates [ArrayBroadcastChannel];
-         * * when `capacity` is [CONFLATED] -- creates [ConflatedBroadcastChannel] that conflates back-to-back sends;
-         * * otherwise -- throws [IllegalArgumentException].
+         * @suppress **Deprecated**
          */
-        public operator fun <E> invoke(capacity: Int): BroadcastChannel<E> =
-            when (capacity) {
-                0 -> throw IllegalArgumentException("Unsupported 0 capacity for BroadcastChannel")
-                UNLIMITED -> throw IllegalArgumentException("Unsupported UNLIMITED capacity for BroadcastChannel")
-                CONFLATED -> ConflatedBroadcastChannel()
-                else -> ArrayBroadcastChannel(capacity)
-            }
+        @Deprecated("Replaced with top-level function", level = DeprecationLevel.HIDDEN)
+        public operator fun <E> invoke(capacity: Int): BroadcastChannel<E> = BroadcastChannel(capacity)
     }
 
     /**
@@ -55,11 +47,34 @@ public interface BroadcastChannel<E> : SendChannel<E> {
      * The resulting channel shall be [closed][SubscriptionReceiveChannel.close] to unsubscribe from this
      * broadcast channel.
      */
-    public fun open(): SubscriptionReceiveChannel<E>
+    public fun openSubscription(): SubscriptionReceiveChannel<E>
+
+    /**
+     * @suppress **Deprecated**: Renamed to [openSubscription]
+     */
+    @Deprecated(message = "Renamed to `openSubscription`",
+        replaceWith = ReplaceWith("openSubscription()"))
+    public fun open(): SubscriptionReceiveChannel<E> = openSubscription()
 }
 
 /**
- * Return type for [BroadcastChannel.open] that can be used to [receive] elements from the
+ * Creates a broadcast channel with the specified buffer capacity.
+ *
+ * The resulting channel type depends on the specified [capacity] parameter:
+ * * when `capacity` positive, but less than [UNLIMITED] -- creates [ArrayBroadcastChannel];
+ * * when `capacity` is [CONFLATED] -- creates [ConflatedBroadcastChannel] that conflates back-to-back sends;
+ * * otherwise -- throws [IllegalArgumentException].
+ */
+public fun <E> BroadcastChannel(capacity: Int): BroadcastChannel<E> =
+    when (capacity) {
+        0 -> throw IllegalArgumentException("Unsupported 0 capacity for BroadcastChannel")
+        UNLIMITED -> throw IllegalArgumentException("Unsupported UNLIMITED capacity for BroadcastChannel")
+        CONFLATED -> ConflatedBroadcastChannel()
+        else -> ArrayBroadcastChannel(capacity)
+    }
+
+/**
+ * Return type for [BroadcastChannel.openSubscription] that can be used to [receive] elements from the
  * open subscription and to [close] it to unsubscribe.
  */
 public interface SubscriptionReceiveChannel<out T> : ReceiveChannel<T>, Closeable {

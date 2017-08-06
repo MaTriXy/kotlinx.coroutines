@@ -16,28 +16,35 @@
 
 package kotlinx.coroutines.experimental.rx2
 
+import guide.test.ignoreLostThreads
 import io.reactivex.Maybe
-import kotlinx.coroutines.experimental.CommonPool
-import kotlinx.coroutines.experimental.runBlocking
-import org.junit.Assert.assertEquals
-import org.junit.Test
 import io.reactivex.Observable
 import io.reactivex.functions.Action
 import io.reactivex.internal.functions.Functions.ON_ERROR_MISSING
 import io.reactivex.internal.functions.Functions.emptyConsumer
+import kotlinx.coroutines.experimental.CommonPool
 import kotlinx.coroutines.experimental.TestBase
+import kotlinx.coroutines.experimental.runBlocking
 import kotlinx.coroutines.experimental.yield
 import org.hamcrest.core.IsEqual
 import org.hamcrest.core.IsInstanceOf
 import org.junit.Assert
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Before
+import org.junit.Test
 import java.util.concurrent.TimeUnit
 
 class MaybeTest : TestBase() {
+    @Before
+    fun setup() {
+        ignoreLostThreads("RxComputationThreadPool-", "RxCachedWorkerPoolEvictor-", "RxSchedulerPurge-")
+    }
+
     @Test
     fun testBasicSuccess() = runBlocking<Unit> {
         expect(1)
-        val maybe = rxMaybe(context) {
+        val maybe = rxMaybe(coroutineContext) {
             expect(4)
             "OK"
         }
@@ -54,7 +61,7 @@ class MaybeTest : TestBase() {
     @Test
     fun testBasicEmpty() = runBlocking<Unit> {
         expect(1)
-        val maybe = rxMaybe(context) {
+        val maybe = rxMaybe(coroutineContext) {
             expect(4)
             null
         }
@@ -70,7 +77,7 @@ class MaybeTest : TestBase() {
     @Test
     fun testBasicFailure() = runBlocking<Unit> {
         expect(1)
-        val maybe = rxMaybe(context) {
+        val maybe = rxMaybe(coroutineContext) {
             expect(4)
             throw RuntimeException("OK")
         }
@@ -91,7 +98,7 @@ class MaybeTest : TestBase() {
     @Test
     fun testBasicUnsubscribe() = runBlocking<Unit> {
         expect(1)
-        val maybe = rxMaybe(context) {
+        val maybe = rxMaybe(coroutineContext) {
             expect(4)
             yield() // back to main, will get cancelled
             expectUnreached()

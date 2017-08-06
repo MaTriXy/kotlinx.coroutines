@@ -65,7 +65,7 @@ class ConflatedBroadcastChannelNotifyStressTest : TestBase() {
             }
         }
         // print progress
-        val progressJob = launch(context) {
+        val progressJob = launch(coroutineContext) {
             var seconds = 0
             while (true) {
                 delay(1000)
@@ -93,7 +93,7 @@ class ConflatedBroadcastChannelNotifyStressTest : TestBase() {
     }
 
     suspend fun waitForEvent(): Int =
-        broadcast.open().use {
+        broadcast.openSubscription().use {
             it.receive()
         }
 }

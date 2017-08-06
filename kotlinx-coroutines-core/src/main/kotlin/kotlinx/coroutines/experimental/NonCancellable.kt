@@ -39,6 +39,9 @@ object NonCancellable : AbstractCoroutineContextElement(Job), Job {
     override val isCompleted: Boolean get() = false
 
     /** Always returns `false`. */
+    override val isCancelled: Boolean get() = false
+
+    /** Always returns `false`. */
     override fun start(): Boolean = false
 
     /** Always throws [UnsupportedOperationException]. */
@@ -59,6 +62,9 @@ object NonCancellable : AbstractCoroutineContextElement(Job), Job {
 
     /** Always returns [NonDisposableHandle]. */
     override fun invokeOnCompletion(handler: CompletionHandler): DisposableHandle = NonDisposableHandle
+
+    /** Always returns [NonDisposableHandle]. */
+    override fun invokeOnCompletion(handler: CompletionHandler, onCancelling: Boolean): DisposableHandle = NonDisposableHandle
 
     /** Always returns `false`. */
     override fun cancel(cause: Throwable?): Boolean = false

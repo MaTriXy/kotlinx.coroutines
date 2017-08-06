@@ -64,6 +64,7 @@ public fun <T> future(
 private class ListenableFutureCoroutine<T>(
     override val context: CoroutineContext
 ) : AbstractFuture<T>(), Continuation<T>, CoroutineScope {
+    override val coroutineContext: CoroutineContext get() = context
     override val isActive: Boolean get() = context[Job]!!.isActive
     override fun resume(value: T) { set(value) }
     override fun resumeWithException(exception: Throwable) { setException(exception) }
@@ -95,7 +96,7 @@ private class DeferredListenableFuture<T>(
  * Awaits for completion of the future without blocking a thread.
  *
  * This suspending function is cancellable.
- * If the [Job] of the current coroutine is completed while this suspending function is waiting, this function
+ * If the [Job] of the current coroutine is cancelled or completed while this suspending function is waiting, this function
  * stops waiting for the future and immediately resumes with [CancellationException].
  *
  * Note, that `ListenableFuture` does not support removal of installed listeners, so on cancellation of this wait
@@ -114,6 +115,7 @@ public suspend fun <T> ListenableFuture<T>.await(): T = suspendCancellableCorout
 private class ContinuationCallback<T>(
     @Volatile @JvmField var cont: Continuation<T>?
 ) : FutureCallback<T> {
+    @Suppress("UNCHECKED_CAST")
     override fun onSuccess(result: T?) { cont?.resume(result as T) }
     override fun onFailure(t: Throwable) { cont?.resumeWithException(t) }
 }

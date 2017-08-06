@@ -16,12 +16,14 @@
 
 package kotlinx.coroutines.experimental.channels
 
-import kotlinx.coroutines.experimental.ALREADY_SELECTED
+import kotlinx.coroutines.experimental.selects.ALREADY_SELECTED
 import kotlinx.coroutines.experimental.selects.SelectInstance
 
 /**
  * Channel with linked-list buffer of a unlimited capacity (limited only by available memory).
  * Sender to this channel never suspends and [offer] always returns `true`.
+ *
+ * This channel is created by `Channel(Channel.UNLIMITED)` factory function invocation.
  *
  * This implementation is fully lock-free.
  */

@@ -17,9 +17,9 @@
 package kotlinx.coroutines.experimental
 
 import java.util.concurrent.Executor
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.experimental.Continuation
 import kotlin.coroutines.experimental.CoroutineContext
 
 /**
@@ -42,33 +42,38 @@ private class ExecutorCoroutineDispatcher(override val executor: Executor) : Exe
 internal abstract class ExecutorCoroutineDispatcherBase : CoroutineDispatcher(), Delay {
     abstract val executor: Executor
 
-    override fun dispatch(context: CoroutineContext, block: Runnable) = executor.execute(block)
+    override fun dispatch(context: CoroutineContext, block: Runnable) =
+        try { executor.execute(timeSource.trackTask(block)) }
+        catch (e: RejectedExecutionException) {
+            timeSource.unTrackTask()
+            DefaultExecutor.execute(block)
+        }
 
     override fun scheduleResumeAfterDelay(time: Long, unit: TimeUnit, continuation: CancellableContinuation<Unit>) {
-        val timeout = (executor as? ScheduledExecutorService)
-            ?.schedule(ResumeUndispatchedRunnable(this, continuation), time, unit)
-            ?: scheduledExecutor.schedule(ResumeRunnable(continuation), time, unit)
-        continuation.cancelFutureOnCompletion(timeout)
+        val timeout =
+            try { (executor as? ScheduledExecutorService)
+                ?.schedule(ResumeUndispatchedRunnable(this, continuation), time, unit) }
+            catch (e: RejectedExecutionException) { null }
+        if (timeout != null)
+            continuation.cancelFutureOnCompletion(timeout)
+        else
+            DefaultExecutor.scheduleResumeAfterDelay(time, unit, continuation)
     }
 
     override fun invokeOnTimeout(time: Long, unit: TimeUnit, block: Runnable): DisposableHandle {
-        val timeout = (executor as? ScheduledExecutorService)
-            ?.schedule(block, time, unit)
-            ?: scheduledExecutor.schedule(block, time, unit)
-        return DisposableFutureHandle(timeout)
+        val timeout =
+            try { (executor as? ScheduledExecutorService)
+                ?.schedule(block, time, unit) }
+            catch (e: RejectedExecutionException) { null }
+        if (timeout != null)
+            return DisposableFutureHandle(timeout)
+        else
+            return DefaultExecutor.invokeOnTimeout(time, unit, block)
     }
 
     override fun toString(): String = executor.toString()
     override fun equals(other: Any?): Boolean = other is ExecutorCoroutineDispatcherBase && other.executor === executor
     override fun hashCode(): Int = System.identityHashCode(executor)
-}
-
-internal class ResumeRunnable(
-    private val continuation: Continuation<Unit>
-) : Runnable {
-    override fun run() {
-        continuation.resume(Unit)
-    }
 }
 
 private class ResumeUndispatchedRunnable(

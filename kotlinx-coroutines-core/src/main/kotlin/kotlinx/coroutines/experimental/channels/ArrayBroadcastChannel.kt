@@ -16,7 +16,7 @@
 
 package kotlinx.coroutines.experimental.channels
 
-import kotlinx.coroutines.experimental.ALREADY_SELECTED
+import kotlinx.coroutines.experimental.selects.ALREADY_SELECTED
 import kotlinx.coroutines.experimental.selects.SelectInstance
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.locks.ReentrantLock
@@ -24,11 +24,13 @@ import kotlin.concurrent.withLock
 
 /**
  * Broadcast channel with array buffer of a fixed [capacity].
- * Sender suspends only when buffer is fully due to one of the receives not being late and
+ * Sender suspends only when buffer is full due to one of the receives being slow to consume and
  * receiver suspends only when buffer is empty.
  *
- * Note, that elements that are sent to the broadcast channel while there are no [open] subscribers are immediately
+ * Note, that elements that are sent to the broadcast channel while there are no [openSubscription] subscribers are immediately
  * lost.
+ *
+ * This channel is created by `BroadcastChannel(capacity)` factory function invocation.
  *
  * This implementation uses lock to protect the buffer, which is held only during very short buffer-update operations.
  * The lock at each subscription is also used to manage concurrent attempts to receive from the same subscriber.
@@ -61,7 +63,7 @@ class ArrayBroadcastChannel<E>(
     override val isBufferAlwaysFull: Boolean get() = false
     override val isBufferFull: Boolean get() = size >= capacity
 
-    override fun open(): SubscriptionReceiveChannel<E> {
+    override fun openSubscription(): SubscriptionReceiveChannel<E> {
         val sub = Subscriber(this, head)
         subs.add(sub)
         // between creating and adding of subscription into the list the buffer head could have been bumped past it,
@@ -128,11 +130,13 @@ class ArrayBroadcastChannel<E>(
 
     private fun checkSubOffers() {
         var updated = false
+        var hasSubs = false
         @Suppress("LoopToCallChain") // must invoke `checkOffer` on every sub
         for (sub in subs) {
+            hasSubs = true
             if (sub.checkOffer()) updated = true
         }
-        if (updated)
+        if (updated || !hasSubs)
             updateHead()
     }
 

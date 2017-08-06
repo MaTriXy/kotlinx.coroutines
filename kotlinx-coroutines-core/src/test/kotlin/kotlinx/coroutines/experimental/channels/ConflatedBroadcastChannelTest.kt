@@ -20,7 +20,7 @@ import kotlinx.coroutines.experimental.*
 import org.hamcrest.core.IsEqual
 import org.hamcrest.core.IsInstanceOf
 import org.hamcrest.core.IsNull
-import org.junit.Assert.*
+import org.junit.Assert.assertThat
 import org.junit.Test
 
 class ConflatedBroadcastChannelTest : TestBase() {
@@ -30,9 +30,9 @@ class ConflatedBroadcastChannelTest : TestBase() {
         val broadcast = ConflatedBroadcastChannel<String>()
         assertThat(exceptionFrom { broadcast.value }, IsInstanceOf(IllegalStateException::class.java))
         assertThat(broadcast.valueOrNull, IsNull())
-        launch(context, CoroutineStart.UNDISPATCHED) {
+        launch(coroutineContext, CoroutineStart.UNDISPATCHED) {
             expect(2)
-            val sub = broadcast.open()
+            val sub = broadcast.openSubscription()
             assertThat(sub.poll(), IsNull())
             expect(3)
             assertThat(sub.receive(), IsEqual("one")) // suspends
@@ -49,9 +49,9 @@ class ConflatedBroadcastChannelTest : TestBase() {
         expect(5)
         yield() // to receiver
         expect(7)
-        launch(context, CoroutineStart.UNDISPATCHED) {
+        launch(coroutineContext, CoroutineStart.UNDISPATCHED) {
             expect(8)
-            val sub = broadcast.open()
+            val sub = broadcast.openSubscription()
             assertThat(sub.receive(), IsEqual("one")) // does not suspend
             expect(9)
             assertThat(sub.receive(), IsEqual("two")) // suspends
@@ -91,9 +91,9 @@ class ConflatedBroadcastChannelTest : TestBase() {
         val broadcast = ConflatedBroadcastChannel<Int>(1)
         assertThat(broadcast.value, IsEqual(1))
         assertThat(broadcast.valueOrNull, IsEqual(1))
-        launch(context, CoroutineStart.UNDISPATCHED) {
+        launch(coroutineContext, CoroutineStart.UNDISPATCHED) {
             expect(2)
-            val sub = broadcast.open()
+            val sub = broadcast.openSubscription()
             assertThat(sub.receive(), IsEqual(1))
             expect(3)
             assertThat(exceptionFrom { sub.receive() }, IsInstanceOf(ClosedReceiveChannelException::class.java)) // suspends

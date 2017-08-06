@@ -16,9 +16,7 @@
 
 package kotlinx.coroutines.experimental
 
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.experimental.CoroutineContext
 
@@ -32,7 +30,7 @@ object CommonPool : CoroutineDispatcher() {
     private var usePrivatePool = false
 
     @Volatile
-    private var _pool: ExecutorService? = null
+    private var _pool: Executor? = null
 
     private inline fun <T> Try(block: () -> T) = try { block() } catch (e: Throwable) { null }
 
@@ -58,29 +56,42 @@ object CommonPool : CoroutineDispatcher() {
     private fun defaultParallelism() = (Runtime.getRuntime().availableProcessors() - 1).coerceAtLeast(1)
 
     @Synchronized
-    private fun getOrCreatePoolSync(): ExecutorService =
+    private fun getOrCreatePoolSync(): Executor =
         _pool ?: createPool().also { _pool = it }
 
     override fun dispatch(context: CoroutineContext, block: Runnable) =
-        (_pool ?: getOrCreatePoolSync()).execute(block)
+        try { (_pool ?: getOrCreatePoolSync()).execute(timeSource.trackTask(block)) }
+        catch (e: RejectedExecutionException) {
+            timeSource.unTrackTask()
+            DefaultExecutor.execute(block)
+        }
 
     // used for tests
     @Synchronized
     internal fun usePrivatePool() {
-        shutdownAndRelease(0)
+        shutdown(0)
         usePrivatePool = true
+        _pool = null
     }
 
     // used for tests
     @Synchronized
-    internal fun shutdownAndRelease(timeout: Long) {
-        _pool?.apply {
+    internal fun shutdown(timeout: Long) {
+        (_pool as? ExecutorService)?.apply {
             shutdown()
             if (timeout > 0)
                 awaitTermination(timeout, TimeUnit.MILLISECONDS)
-            _pool = null
+            shutdownNow().forEach { DefaultExecutor.execute(it) }
         }
+        _pool = Executor { throw RejectedExecutionException("CommonPool was shutdown") }
+    }
+
+    // used for tests
+    @Synchronized
+    internal fun restore() {
+        shutdown(0)
         usePrivatePool = false
+        _pool = null
     }
 
     override fun toString(): String = "CommonPool"

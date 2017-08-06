@@ -58,9 +58,9 @@ public fun <T> publish(
 }
 
 private class PublisherCoroutine<T>(
-    override val parentContext: CoroutineContext,
+    parentContext: CoroutineContext,
     private val subscriber: Subscriber<T>
-) : AbstractCoroutine<Unit>(true), ProducerScope<T>, Subscription {
+) : AbstractCoroutine<Unit>(parentContext, true), ProducerScope<T>, Subscription {
     override val channel: SendChannel<T> get() = this
 
     // Mutex is locked when either nRequested == 0 or while subscriber.onXXX is being invoked
@@ -113,7 +113,7 @@ private class PublisherCoroutine<T>(
     // assert: mutex.isLocked()
     private fun doLockedNext(elem: T) {
         // check if already closed for send
-        if (isCompleted) {
+        if (!isActive) {
             doLockedSignalCompleted()
             throw sendException()
         }
@@ -123,7 +123,7 @@ private class PublisherCoroutine<T>(
         } catch (e: Throwable) {
             try {
                 if (!cancel(e))
-                    handleCoroutineException(context, e)
+                    handleCoroutineException(coroutineContext, e)
             } finally {
                 doLockedSignalCompleted()
             }
@@ -141,14 +141,14 @@ private class PublisherCoroutine<T>(
             }
         }
         /*
-           There is no sense to check for `isCompleted` before doing `unlock`, because completion might
-           happen after this check and before `unlock` (see `afterCompleted` that does not do anything
+           There is no sense to check for `isActive` before doing `unlock`, because cancellation/completion might
+           happen after this check and before `unlock` (see `onCancellation` that does not do anything
            if it fails to acquire the lock that we are still holding).
-           We have to recheck `isCompleted` after `unlock` anyway.
+           We have to recheck `isActive` after `unlock` anyway.
          */
         mutex.unlock()
-        // recheck isCompleted
-        if (isCompleted && mutex.tryLock())
+        // recheck isActive
+        if (!isActive && mutex.tryLock())
             doLockedSignalCompleted()
     }
 
@@ -157,14 +157,14 @@ private class PublisherCoroutine<T>(
         try {
             if (nRequested >= CLOSED) {
                 nRequested = SIGNALLED // we'll signal onError/onCompleted (that the final state -- no CAS needed)
-                val state = this.state
+                val cause = getCompletionCause()
                 try {
-                    if (state is CompletedExceptionally && state.cause != null)
-                        subscriber.onError(state.cause)
+                    if (cause != null)
+                        subscriber.onError(cause)
                     else
                         subscriber.onComplete()
                 } catch (e: Throwable) {
-                    handleCoroutineException(context, e)
+                    handleCoroutineException(coroutineContext, e)
                 }
             }
         } finally {
@@ -188,8 +188,8 @@ private class PublisherCoroutine<T>(
                 // unlock the mutex when we don't have back-pressure anymore
                 if (cur == 0L) {
                     mutex.unlock()
-                    // recheck isCompleted
-                    if (isCompleted && mutex.tryLock())
+                    // recheck isActive
+                    if (!isActive && mutex.tryLock())
                         doLockedSignalCompleted()
                 }
                 return
@@ -197,11 +197,11 @@ private class PublisherCoroutine<T>(
         }
     }
 
-    override fun afterCompletion(state: Any?, mode: Int) {
+    override fun onCancellation() {
         while (true) { // lock-free loop for nRequested
             val cur = nRequested
-            if (cur == SIGNALLED) return // some other thread holding lock already signalled completion
-            check(cur >= 0) // no other thread could have marked it as CLOSED, because afterCompletion is invoked once
+            if (cur == SIGNALLED) return // some other thread holding lock already signalled cancellation/completion
+            check(cur >= 0) // no other thread could have marked it as CLOSED, because onCancellation is invoked once
             if (!N_REQUESTED.compareAndSet(this, cur, CLOSED)) continue // retry on failed CAS
             // Ok -- marked as CLOSED, now can unlock the mutex if it was locked due to backpressure
             if (cur == 0L) {

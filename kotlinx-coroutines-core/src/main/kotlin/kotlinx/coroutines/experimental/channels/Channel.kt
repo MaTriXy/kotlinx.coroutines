@@ -19,6 +19,8 @@ package kotlinx.coroutines.experimental.channels
 import kotlinx.coroutines.experimental.CancellationException
 import kotlinx.coroutines.experimental.CoroutineScope
 import kotlinx.coroutines.experimental.Job
+import kotlinx.coroutines.experimental.channels.Channel.Factory.CONFLATED
+import kotlinx.coroutines.experimental.channels.Channel.Factory.UNLIMITED
 import kotlinx.coroutines.experimental.selects.SelectBuilder
 import kotlinx.coroutines.experimental.selects.SelectInstance
 import kotlinx.coroutines.experimental.selects.select
@@ -52,7 +54,7 @@ public interface SendChannel<in E> {
      * All elements that are sent over the channel are delivered in first-in first-out order. The element that
      * is being sent will get delivered to receivers before a close token.
      *
-     * This suspending function is cancellable. If the [Job] of the current coroutine is completed while this
+     * This suspending function is cancellable. If the [Job] of the current coroutine is cancelled or completed while this
      * function is suspended, this function immediately resumes with [CancellationException].
      *
      * *Cancellation of suspended send is atomic* -- when this function
@@ -123,7 +125,7 @@ public interface ReceiveChannel<out E> {
      * If the channel was closed because of the exception, it is called a _failed_ channel and this function
      * throws the original [close][SendChannel.close] cause exception.
      *
-     * This suspending function is cancellable. If the [Job] of the current coroutine is completed while this
+     * This suspending function is cancellable. If the [Job] of the current coroutine is cancelled or completed while this
      * function is suspended, this function immediately resumes with [CancellationException].
      *
      * *Cancellation of suspended receive is atomic* -- when this function
@@ -145,7 +147,7 @@ public interface ReceiveChannel<out E> {
      * or returns `null` if the channel is [closed][isClosedForReceive] _normally_,
      * or throws the original [close][SendChannel.close] cause exception if the channel has _failed_.
      *
-     * This suspending function is cancellable. If the [Job] of the current coroutine is completed while this
+     * This suspending function is cancellable. If the [Job] of the current coroutine is cancelled or completed while this
      * function is suspended, this function immediately resumes with [CancellationException].
      *
      * *Cancellation of suspended receive is atomic* -- when this function
@@ -203,7 +205,7 @@ public interface ChannelIterator<out E> {
      * This function retrieves and removes the element from this channel for the subsequent invocation
      * of [next].
      *
-     * This suspending function is cancellable. If the [Job] of the current coroutine is completed while this
+     * This suspending function is cancellable. If the [Job] of the current coroutine is cancelled or completed while this
      * function is suspended, this function immediately resumes with [CancellationException].
      *
      * *Cancellation of suspended receive is atomic* -- when this function
@@ -223,7 +225,7 @@ public interface ChannelIterator<out E> {
      * [isClosedForReceive][ReceiveChannel.isClosedForReceive].
      * It throws the original [close][SendChannel.close] cause exception if the channel has _failed_.
      *
-     * This suspending function is cancellable. If the [Job] of the current coroutine is completed while this
+     * This suspending function is cancellable. If the [Job] of the current coroutine is cancelled or completed while this
      * function is suspended, this function immediately resumes with [CancellationException].
      *
      * *Cancellation of suspended receive is atomic* -- when this function
@@ -243,44 +245,56 @@ public interface ChannelIterator<out E> {
  * Conceptually, a channel is similar to [BlockingQueue][java.util.concurrent.BlockingQueue],
  * but it has suspending operations instead of blocking ones and it can be closed.
  *
- * See [Channel()][Channel.invoke] factory function for the description of available channel implementations.
+ * See `Channel(capacity)` factory function for the description of available channel implementations.
  */
 public interface Channel<E> : SendChannel<E>, ReceiveChannel<E> {
     /**
-     * Factory for channels.
+     * Constants for channel factory function `Channel()`.
      */
     public companion object Factory {
         /**
-         * Requests channel with unlimited capacity buffer in [Channel()][invoke] factory function --
+         * Requests channel with unlimited capacity buffer in `Channel(...)` factory function --
          * the [LinkedListChannel] gets created.
          */
         public const val UNLIMITED = Int.MAX_VALUE
 
         /**
-         * Requests conflated channel in [Channel()][invoke] factory function --
+         * Requests conflated channel in `Channel(...)` factory function --
          * the [ConflatedChannel] gets created.
          */
         public const val CONFLATED = -1
 
         /**
          * Creates a channel with the specified buffer capacity (or without a buffer by default).
-         *
-         * The resulting channel type depends on the specified [capacity] parameter:
-         * * when `capacity` is 0 (default) -- creates [RendezvousChannel] without a buffer;
-         * * when `capacity` is [UNLIMITED] -- creates [LinkedListChannel] with buffer of unlimited size;
-         * * when `capacity` is [CONFLATED] -- creates [ConflatedChannel] that conflates back-to-back sends;
-         * * when `capacity` is positive, but less than [UNLIMITED] -- creates [ArrayChannel] with a buffer of the specified `capacity`;
-         * * otherwise -- throws [IllegalArgumentException].
+         * @suppress **Deprecated**
          */
-        public operator fun <E> invoke(capacity: Int = 0): Channel<E> =
-            when (capacity) {
-                0 -> RendezvousChannel()
-                UNLIMITED -> LinkedListChannel()
-                CONFLATED -> ConflatedChannel()
-                else -> ArrayChannel(capacity)
-            }
+        @Deprecated("Replaced with top-level function", level = DeprecationLevel.HIDDEN)
+        public operator fun <E> invoke(capacity: Int = 0): Channel<E> = Channel(capacity)
     }
 }
+
+/**
+ * Creates a channel without a buffer -- [RendezvousChannel].
+ */
+public fun <E> Channel(): Channel<E> = RendezvousChannel<E>()
+
+/**
+ * Creates a channel with the specified buffer capacity (or without a buffer by default).
+ *
+ * The resulting channel type depends on the specified [capacity] parameter:
+ * * when `capacity` is 0 -- creates [RendezvousChannel] without a buffer;
+ * * when `capacity` is [Channel.UNLIMITED] -- creates [LinkedListChannel] with buffer of unlimited size;
+ * * when `capacity` is [Channel.CONFLATED] -- creates [ConflatedChannel] that conflates back-to-back sends;
+ * * when `capacity` is positive, but less than [UNLIMITED] -- creates [ArrayChannel] with a buffer of the specified `capacity`;
+ * * otherwise -- throws [IllegalArgumentException].
+ */
+public fun <E> Channel(capacity: Int): Channel<E> =
+    when (capacity) {
+        0 -> RendezvousChannel()
+        UNLIMITED -> LinkedListChannel()
+        CONFLATED -> ConflatedChannel()
+        else -> ArrayChannel(capacity)
+    }
 
 /**
  * Indicates attempt to [send][SendChannel.send] on [isClosedForSend][SendChannel.isClosedForSend] channel

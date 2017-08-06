@@ -16,7 +16,7 @@
 
 package kotlinx.coroutines.experimental.channels
 
-import kotlinx.coroutines.experimental.ALREADY_SELECTED
+import kotlinx.coroutines.experimental.selects.ALREADY_SELECTED
 import kotlinx.coroutines.experimental.selects.SelectInstance
 
 /**
@@ -25,6 +25,8 @@ import kotlinx.coroutines.experimental.selects.SelectInstance
  * Back-to-send sent elements are _conflated_ -- only the the most recently sent element is received,
  * while previously sent elements **are lost**.
  * Sender to this channel never suspends and [offer] always returns `true`.
+ *
+ * This channel is created by `Channel(Channel.CONFLATED)` factory function invocation.
  *
  * This implementation is fully lock-free.
  */

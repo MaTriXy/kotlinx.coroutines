@@ -16,7 +16,6 @@
 
 package kotlinx.coroutines.experimental.channels
 
-import kotlinx.coroutines.experimental.MODE_DIRECT
 import kotlinx.coroutines.experimental.internal.Symbol
 import kotlinx.coroutines.experimental.intrinsics.startCoroutineUndispatched
 import kotlinx.coroutines.experimental.selects.SelectInstance
@@ -24,7 +23,7 @@ import java.util.concurrent.atomic.AtomicIntegerFieldUpdater
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater
 
 /**
- * Broadcasts the most recently sent element (aka [value]) to all [open] subscribers.
+ * Broadcasts the most recently sent element (aka [value]) to all [openSubscription] subscribers.
  *
  * Back-to-send sent elements are _conflated_ -- only the the most recently sent value is received,
  * while previously sent elements **are lost**.
@@ -32,9 +31,10 @@ import java.util.concurrent.atomic.AtomicReferenceFieldUpdater
  * Sender to this broadcast channel never suspends and [offer] always returns `true`.
  *
  * A secondary constructor can be used to create an instance of this class that already holds a value.
+ * This channel is also created by `BroadcastChannel(Channel.CONFLATED)` factory function invocation.
  *
  * This implementation is fully lock-free. In this implementation
- * [opening][open] and [closing][SubscriptionReceiveChannel.close] subscription takes O(N) time, where N is the
+ * [opening][openSubscription] and [closing][SubscriptionReceiveChannel.close] subscription takes O(N) time, where N is the
  * number of subscribers.
  */
 public class ConflatedBroadcastChannel<E>() : BroadcastChannel<E> {
@@ -125,7 +125,7 @@ public class ConflatedBroadcastChannel<E>() : BroadcastChannel<E> {
     override val isFull: Boolean get() = false
 
     @Suppress("UNCHECKED_CAST")
-    override fun open(): SubscriptionReceiveChannel<E> {
+    override fun openSubscription(): SubscriptionReceiveChannel<E> {
         val subscriber = Subscriber<E>(this)
         while (true) { // lock-free loop on state
             val state = this.state
@@ -249,9 +249,9 @@ public class ConflatedBroadcastChannel<E>() : BroadcastChannel<E> {
     }
 
     override fun <R> registerSelectSend(select: SelectInstance<R>, element: E, block: suspend () -> R) {
-        if (!select.trySelect(idempotent = null)) return
+        if (!select.trySelect(null)) return
         offerInternal(element)?.let {
-            select.resumeSelectWithException(it.sendException, MODE_DIRECT)
+            select.resumeSelectCancellableWithException(it.sendException)
             return
         }
         block.startCoroutineUndispatched(select.completion)

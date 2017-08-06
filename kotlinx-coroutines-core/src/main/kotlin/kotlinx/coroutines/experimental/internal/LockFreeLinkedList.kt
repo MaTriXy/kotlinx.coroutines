@@ -92,11 +92,10 @@ public open class LockFreeLinkedListNode {
     @PublishedApi
     internal abstract class CondAddOp(
         @JvmField val newNode: Node
-    ) : AtomicOp() {
+    ) : AtomicOp<Node>() {
         @JvmField var oldNext: Node? = null
 
-        override fun complete(affected: Any?, failure: Any?) {
-            affected as Node // type assertion
+        override fun complete(affected: Node, failure: Any?) {
             val success = failure == null
             val update = if (success) newNode else oldNext
             if (NEXT.compareAndSet(affected, this, update)) {
@@ -109,8 +108,10 @@ public open class LockFreeLinkedListNode {
     @PublishedApi
     internal inline fun makeCondAddOp(node: Node, crossinline condition: () -> Boolean): CondAddOp =
         object : CondAddOp(node) {
-            override fun prepare(): Any? = if (condition()) null else CONDITION_FALSE
+            override fun prepare(affected: Node): Any? = if (condition()) null else CONDITION_FALSE
         }
+
+    public val isFresh: Boolean get() = _next === this
 
     public val isRemoved: Boolean get() = next is Removed
 
@@ -130,7 +131,7 @@ public open class LockFreeLinkedListNode {
             if (prev is Removed) return prev
             prev as Node // otherwise, it can be only node otherwise
             if (prev.next === this) return prev
-            helpInsert(prev, null)
+            correctPrev(prev, null)
         }
     }
 
@@ -228,13 +229,14 @@ public open class LockFreeLinkedListNode {
     // ------ removeXXX ------
 
     /**
-     * Removes this node from the list. Returns `true` when removed successfully.
+     * Removes this node from the list. Returns `true` when removed successfully, or `false` if the node was already
+     * removed or if it was not added to any list in the first place.
      */
     public open fun remove(): Boolean {
         while (true) { // lock-free loop on next
             val next = this.next
             if (next is Removed) return false // was already removed -- don't try to help (original thread will take care)
-            check(next !== this) // sanity check -- can be true for sentinel nodes only, but they are never removed
+            if (next === this) return false // was not even added
             val removed = (next as Node).removed()
             if (NEXT.compareAndSet(this, next, removed)) {
                 // was removed successfully (linearized remove) -- fixup the list
@@ -315,7 +317,7 @@ public open class LockFreeLinkedListNode {
                     continue
                 }
                 // linked improperly -- help insert
-                queue.helpInsert(prev, op)
+                queue.correctPrev(prev, op)
             }
         }
 
@@ -392,7 +394,7 @@ public open class LockFreeLinkedListNode {
         // It inserts "op" descriptor of when "op" status is still undecided (rolls back otherwise)
         private class PrepareOp(
             @JvmField val next: Node,
-            @JvmField val op: AtomicOp,
+            @JvmField val op: AtomicOp<Node>,
             @JvmField val desc: AbstractAtomicDesc
         ) : OpDescriptor() {
             override fun perform(affected: Any?): Any? {
@@ -421,7 +423,8 @@ public open class LockFreeLinkedListNode {
             }
         }
 
-        final override fun prepare(op: AtomicOp): Any? {
+        @Suppress("UNCHECKED_CAST")
+        final override fun prepare(op: AtomicOp<*>): Any? {
             while (true) { // lock free loop on next
                 val affected = takeAffectedNode(op)
                 // read its original next pointer first
@@ -438,7 +441,7 @@ public open class LockFreeLinkedListNode {
                 val failure = failure(affected, next)
                 if (failure != null) return failure // signal failure
                 if (retry(affected, next)) continue // retry operation
-                val prepareOp = PrepareOp(next as Node, op, this)
+                val prepareOp = PrepareOp(next as Node, op as AtomicOp<Node>, this)
                 if (NEXT.compareAndSet(affected, next, prepareOp)) {
                     // prepared -- complete preparations
                     val prepFail = prepareOp.perform(affected)
@@ -448,7 +451,7 @@ public open class LockFreeLinkedListNode {
             }
         }
 
-        final override fun complete(op: AtomicOp, failure: Any?) {
+        final override fun complete(op: AtomicOp<*>, failure: Any?) {
             val success = failure == null
             val affectedNode = affectedNode ?: run { check(!success); return }
             val originalNext = this.originalNext ?: run { check(!success); return }
@@ -468,7 +471,7 @@ public open class LockFreeLinkedListNode {
             if (PREV.compareAndSet(next, nextPrev, this)) {
                 if (this.next is Removed) {
                     // already removed
-                    next.helpInsert(nextPrev as Node, null)
+                    next.correctPrev(nextPrev as Node, null)
                 }
                 return
             }
@@ -477,7 +480,7 @@ public open class LockFreeLinkedListNode {
 
     private fun finishRemove(next: Node) {
         helpDelete()
-        next.helpInsert(_prev.unwrap(), null)
+        next.correctPrev(_prev.unwrap(), null)
     }
 
     private fun markPrev(): Node {
@@ -528,7 +531,7 @@ public open class LockFreeLinkedListNode {
     }
 
     // fixes prev links from this node
-    private fun helpInsert(_prev: Node, op: OpDescriptor?) {
+    private fun correctPrev(_prev: Node, op: OpDescriptor?) {
         var prev: Node = _prev
         var last: Node? = null // will be set so that last.next === prev
         while (true) {

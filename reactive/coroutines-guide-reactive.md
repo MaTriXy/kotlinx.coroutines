@@ -26,7 +26,7 @@ package guide.test
 
 import org.junit.Test
 
-class GuideReactiveTest {
+class GuideReactiveTest : ReactiveTestBase() {
 -->
 
 # Guide to reactive streams with coroutines
@@ -106,7 +106,7 @@ import kotlinx.coroutines.experimental.channels.*
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
     // create a channel that produces numbers from 1 to 3 with 200ms delays between them
-    val source = produce<Int>(context) {
+    val source = produce<Int>(coroutineContext) {
         println("Begin") // mark the beginning of this coroutine in output
         for (x in 1..3) {
             delay(200) // wait for 200ms
@@ -162,7 +162,7 @@ import kotlinx.coroutines.experimental.reactive.*
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
     // create a publisher that produces numbers from 1 to 3 with 200ms delays between them
-    val source = publish<Int>(context) {  
+    val source = publish<Int>(coroutineContext) {
     //           ^^^^^^^  <---  Difference from the previous examples is here
         println("Begin") // mark the beginning of this coroutine in output
         for (x in 1..3) {
@@ -223,7 +223,7 @@ method with it.
 
 An example in the previous section uses `source.consumeEach { ... }` snippet to open a subscription 
 and receive all the elements from it. If we need more control on how what to do with 
-the elements that are being received from the channel, we can use [Publisher.open][org.reactivestreams.Publisher.open]
+the elements that are being received from the channel, we can use [Publisher.openSubscription][org.reactivestreams.Publisher.openSubscription]
 as shown in the following example:
 
 <!--- INCLUDE
@@ -238,7 +238,7 @@ fun main(args: Array<String>) = runBlocking<Unit> {
         .doOnSubscribe { println("OnSubscribe") } // provide some insight
         .doFinally { println("Finally") }         // ... into what's going on
     var cnt = 0 
-    source.open().use { channel -> // open channel to the source
+    source.openSubscription().use { channel -> // open channel to the source
         for (x in channel) { // iterate over the channel to receive elements from it
             println(x)
             if (++cnt >= 3) break // break when 3 elements are printed
@@ -262,7 +262,7 @@ Finally
 
 <!--- TEST -->
  
-With an explicit `open` we should [close][SubscriptionReceiveChannel.close] the corresponding 
+With an explicit `openSubscription` we should [close][SubscriptionReceiveChannel.close] the corresponding 
 subscription to unsubscribe from the source. However, instead of invoking `close` explicitly, 
 this code relies on [use](https://kotlinlang.org/api/latest/jvm/stdlib/kotlin.io/use.html)
 function from Kotlin's standard library.
@@ -340,7 +340,7 @@ import io.reactivex.schedulers.Schedulers
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> { 
     // coroutine -- fast producer of elements in the context of the main thread
-    val source = rxFlowable(context) {
+    val source = rxFlowable(coroutineContext) {
         for (x in 1..3) {
             send(x) // this is a suspending function
             println("Sent $x") // print after successfully sent item
@@ -383,7 +383,7 @@ one. Only after consumer processes the first item, producer sends the second one
 RxJava has a concept of [Subject](https://github.com/ReactiveX/RxJava/wiki/Subject) which is an object that
 effectively broadcasts elements to all its subscribers. The matching concept in coroutines world is called a 
 [BroadcastChannel]. There is a variety of subjects in Rx with 
-[BehaviorSubject](http://reactivex.io/RxJava/2.x/javadoc/io/reactivex/subjects/BehaviorSubject.html) being the
+[BehaviorSubject](http://reactivex.io/RxJava/2.x/javadoc/io/reactivex/subjects/BehaviorSubject.html) being
 the one used to manage state:
 
 <!--- INCLUDE
@@ -441,7 +441,7 @@ fun main(args: Array<String>) = runBlocking<Unit> {
 
 > You can get full code [here](kotlinx-coroutines-rx2/src/test/kotlin/guide/example-reactive-basic-07.kt)
 
-The result the same:
+The result is the same:
 
 ```text
 two
@@ -476,7 +476,7 @@ fun main(args: Array<String>) = runBlocking<Unit> {
     subject.onNext("one")
     subject.onNext("two")
     // now launch a coroutine to print the most recent update
-    launch(context) { // use the context of the main thread for a coroutine
+    launch(coroutineContext) { // use the context of the main thread for a coroutine
         subject.consumeEach { println(it) }
     }
     subject.onNext("three")
@@ -513,7 +513,7 @@ fun main(args: Array<String>) = runBlocking<Unit> {
     broadcast.offer("one")
     broadcast.offer("two")
     // now launch a coroutine to print the most recent update
-    launch(context) { // use the context of the main thread for a coroutine
+    launch(coroutineContext) { // use the context of the main thread for a coroutine
         broadcast.consumeEach { println(it) }
     }
     broadcast.offer("three")
@@ -534,7 +534,7 @@ four
 
 Another implementation of [BroadcastChannel] is [ArrayBroadcastChannel]. It delivers every event to every
 subscriber since the moment the corresponding subscription is open. It corresponds to 
-[PublishSubject][http://reactivex.io/RxJava/2.x/javadoc/io/reactivex/subjects/PublishSubject.html] in Rx.
+[PublishSubject](http://reactivex.io/RxJava/2.x/javadoc/io/reactivex/subjects/PublishSubject.html) in Rx.
 The capacity of the buffer in the constructor of `ArrayBroadcastChannel` controls the numbers of elements
 that can be sent before the sender is suspended waiting for receiver to receive those elements.
 
@@ -640,8 +640,8 @@ fun range(context: CoroutineContext, start: Int, count: Int) = publish<Int>(cont
 
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
-   range(context, 1, 5)
-       .fusedFilterMap(context, { it % 2 == 0}, { "$it is even" })
+   range(coroutineContext, 1, 5)
+       .fusedFilterMap(coroutineContext, { it % 2 == 0}, { "$it is even" })
        .consumeEach { println(it) } // print all the resulting strings
 }
 ```
@@ -676,11 +676,11 @@ import kotlinx.coroutines.experimental.selects.whileSelect
 
 ```kotlin
 fun <T, U> Publisher<T>.takeUntil(context: CoroutineContext, other: Publisher<U>) = publish<T>(context) {
-    this@takeUntil.open().use { thisChannel ->           // explicitly open channel to Publisher<T>
-        other.open().use { otherChannel ->               // explicitly open channel to Publisher<U>
+    this@takeUntil.openSubscription().use { thisChannel -> // explicitly open channel to Publisher<T>
+        other.openSubscription().use { otherChannel ->     // explicitly open channel to Publisher<U>
             whileSelect {
-                otherChannel.onReceive { false }         // bail out on any received element from `other`
-                thisChannel.onReceive { send(it); true } // resend element from this channel and continue
+                otherChannel.onReceive { false }          // bail out on any received element from `other`
+                thisChannel.onReceive { send(it); true }  // resend element from this channel and continue
             }
         }
     }
@@ -710,9 +710,9 @@ The following code shows how `takeUntil` works:
 
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
-    val slowNums = rangeWithInterval(context, 200, 1, 10)         // numbers with 200ms interval
-    val stop = rangeWithInterval(context, 500, 1, 10)             // the first one after 500ms
-    slowNums.takeUntil(context, stop).consumeEach { println(it) } // let's test it
+    val slowNums = rangeWithInterval(coroutineContext, 200, 1, 10)         // numbers with 200ms interval
+    val stop = rangeWithInterval(coroutineContext, 500, 1, 10)             // the first one after 500ms
+    slowNums.takeUntil(coroutineContext, stop).consumeEach { println(it) } // let's test it
 }
 ```
 
@@ -745,15 +745,15 @@ import kotlin.coroutines.experimental.CoroutineContext
 ```kotlin
 fun <T> Publisher<Publisher<T>>.merge(context: CoroutineContext) = publish<T>(context) {
   consumeEach { pub ->                 // for each publisher received on the source channel
-      launch(this.context) {           // launch a child coroutine
+      launch(coroutineContext) {       // launch a child coroutine
           pub.consumeEach { send(it) } // resend all element from this publisher
       }
   }
 }
 ```
 
-Notice, the use of `this.context` in the invocation of [launch] coroutine builder. It is used to refer
-to the [CoroutineScope.context] that is provided by [publish] builder. This way, all the coroutines that are
+Notice, the use of `coroutineContext` in the invocation of [launch] coroutine builder. It is used to refer
+to the [CoroutineScope.coroutineContext] that is provided by [publish] builder. This way, all the coroutines that are
 being launched here are [children](../coroutines-guide.md#children-of-a-coroutine) of the `publish`
 coroutine and will get cancelled when the `publish` coroutine is cancelled or is otherwise completed. 
 This implementation completes as soon as the original publisher completes. 
@@ -784,7 +784,7 @@ The test code is to use `merge` on `testPub` and to display the results:
 
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
-    testPub(context).merge(context).consumeEach { println(it) } // print the whole stream
+    testPub(coroutineContext).merge(coroutineContext).consumeEach { println(it) } // print the whole stream
 }
 ```
 
@@ -1050,18 +1050,18 @@ coroutines for complex pipelines with fan-in and fan-out between multiple worker
 [Unconfined]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-unconfined/index.html
 [yield]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/yield.html
 [launch]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/launch.html
-[CoroutineScope.context]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-coroutine-scope/context.html
+[CoroutineScope.coroutineContext]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-coroutine-scope/coroutine-context.html
 [CommonPool]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-common-pool/index.html
 [Job.join]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-job/join.html
 <!--- INDEX kotlinx.coroutines.experimental.channels -->
-[Channel]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-channel/index.html
+[Channel]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-channel.html
 [ReceiveChannel.receive]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-receive-channel/receive.html
 [produce]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/produce.html
 [consumeEach]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/consume-each.html
 [ReceiveChannel]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-receive-channel/index.html
 [SubscriptionReceiveChannel.close]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-subscription-receive-channel/close.html
 [SendChannel.send]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-send-channel/send.html
-[BroadcastChannel]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-broadcast-channel/index.html
+[BroadcastChannel]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-broadcast-channel.html
 [ConflatedBroadcastChannel]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-conflated-broadcast-channel/index.html
 [ArrayBroadcastChannel]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-array-broadcast-channel/index.html
 <!--- INDEX kotlinx.coroutines.experimental.selects -->
@@ -1071,7 +1071,7 @@ coroutines for complex pipelines with fan-in and fan-out between multiple worker
 <!--- INDEX kotlinx.coroutines.experimental.reactive -->
 [publish]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-reactive/kotlinx.coroutines.experimental.reactive/publish.html
 [org.reactivestreams.Publisher.consumeEach]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-reactive/kotlinx.coroutines.experimental.reactive/org.reactivestreams.-publisher/consume-each.html
-[org.reactivestreams.Publisher.open]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-reactive/kotlinx.coroutines.experimental.reactive/org.reactivestreams.-publisher/open.html
+[org.reactivestreams.Publisher.openSubscription]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-reactive/kotlinx.coroutines.experimental.reactive/org.reactivestreams.-publisher/open-subscription.html
 <!--- MODULE kotlinx-coroutines-rx2 -->
 <!--- INDEX kotlinx.coroutines.experimental.rx2 -->
 [rxFlowable]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-rx2/kotlinx.coroutines.experimental.rx2/rx-flowable.html

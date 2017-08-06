@@ -18,6 +18,7 @@ package kotlinx.coroutines.experimental
 
 import java.util.concurrent.locks.LockSupport
 import kotlin.coroutines.experimental.*
+import kotlin.coroutines.experimental.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.experimental.intrinsics.startCoroutineUninterceptedOrReturn
 import kotlin.coroutines.experimental.intrinsics.suspendCoroutineOrReturn
 
@@ -106,16 +107,15 @@ public suspend fun <T> run(
         val newContinuation = RunContinuationDirect(newContext, cont)
         return@sc block.startCoroutineUninterceptedOrReturn(newContinuation)
     }
-    // slowest path otherwise -- use new interceptor, sync to its result via a
-    // full-blown instance of CancellableContinuation
+    // slowest path otherwise -- use new interceptor, sync to its result via a full-blown instance of RunCompletion
     require(!start.isLazy) { "$start start is not supported" }
-    val newContinuation = RunContinuationCoroutine(
-        parentContext = newContext,
-        resumeMode = if (start == CoroutineStart.ATOMIC) MODE_ATOMIC_DEFAULT else MODE_CANCELLABLE,
-        continuation = cont)
-    newContinuation.initCancellability() // attach to parent job
-    start(block, newContinuation)
-    newContinuation.getResult()
+    val completion = RunCompletion(
+        context = newContext,
+        delegate = cont,
+        resumeMode = if (start == CoroutineStart.ATOMIC) MODE_ATOMIC_DEFAULT else MODE_CANCELLABLE)
+    completion.initParentJob(newContext[Job]) // attach to job
+    start(block, completion)
+    completion.getResult()
 }
 
 /** @suppress **Deprecated** */
@@ -153,9 +153,9 @@ public fun <T> runBlocking(context: CoroutineContext = EmptyCoroutineContext, bl
 // --------------- implementation ---------------
 
 private open class StandaloneCoroutine(
-    override val parentContext: CoroutineContext,
+    private val parentContext: CoroutineContext,
     active: Boolean
-) : AbstractCoroutine<Unit>(active) {
+) : AbstractCoroutine<Unit>(parentContext, active) {
     override fun afterCompletion(state: Any?, mode: Int) {
         // note the use of the parent's job context below!
         if (state is CompletedExceptionally) handleCoroutineException(parentContext, state.exception)
@@ -176,18 +176,37 @@ private class RunContinuationDirect<in T>(
     continuation: Continuation<T>
 ) : Continuation<T> by continuation
 
-private class RunContinuationCoroutine<in T>(
-    override val parentContext: CoroutineContext,
-    resumeMode: Int,
-    continuation: Continuation<T>
-) : CancellableContinuationImpl<T>(continuation, defaultResumeMode = resumeMode, active = true)
+@Suppress("UNCHECKED_CAST")
+private class RunCompletion<in T>(
+    override val context: CoroutineContext,
+    private val delegate: Continuation<T>,
+    resumeMode: Int
+) : AbstractContinuation<T>(true, resumeMode) {
+    @PublishedApi
+    internal fun getResult(): Any? {
+        if (trySuspend()) return COROUTINE_SUSPENDED
+        // otherwise, afterCompletion was already invoked & invoked tryResume, and the result is in the state
+        val state = this.state
+        if (state is CompletedExceptionally) throw state.exception
+        return state as T
+    }
+
+    override fun afterCompletion(state: Any?, mode: Int) {
+        if (tryResume()) return // completed before getResult invocation -- bail out
+        // otherwise, getResult has already commenced, i.e. completed later or in other thread
+        if (state is CompletedExceptionally)
+            delegate.resumeWithExceptionMode(state.exception, mode)
+        else
+            delegate.resumeMode(state as T, mode)
+    }
+}
 
 private class BlockingCoroutine<T>(
-    override val parentContext: CoroutineContext,
+    parentContext: CoroutineContext,
     private val blockedThread: Thread,
     private val privateEventLoop: Boolean
-) : AbstractCoroutine<T>(active = true) {
-    val eventLoop: EventLoop? = parentContext[ContinuationInterceptor] as? EventLoop
+) : AbstractCoroutine<T>(parentContext, true) {
+    private val eventLoop: EventLoop? = parentContext[ContinuationInterceptor] as? EventLoop
 
     init {
         if (privateEventLoop) require(eventLoop is EventLoopImpl)
@@ -200,15 +219,17 @@ private class BlockingCoroutine<T>(
 
     @Suppress("UNCHECKED_CAST")
     fun joinBlocking(): T {
+        timeSource.registerTimeLoopThread()
         while (true) {
             if (Thread.interrupted()) throw InterruptedException().also { cancel(it) }
             val parkNanos = eventLoop?.processNextEvent() ?: Long.MAX_VALUE
-            // note: process next even may look unpark flag, so check !isActive before parking
-            if (!isActive) break
-            LockSupport.parkNanos(this, parkNanos)
+            // note: process next even may loose unpark flag, so check if completed before parking
+            if (isCompleted) break
+            timeSource.parkNanos(this, parkNanos)
         }
         // process queued events (that could have been added after last processNextEvent and before cancel
         if (privateEventLoop) (eventLoop as EventLoopImpl).shutdown()
+        timeSource.unregisterTimeLoopThread()
         // now return result
         val state = this.state
         (state as? CompletedExceptionally)?.let { throw it.exception }

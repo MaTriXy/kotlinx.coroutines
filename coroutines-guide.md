@@ -354,13 +354,13 @@ example shows:
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
     val job = launch(CommonPool) {
-        var nextPrintTime = 0L
+        var nextPrintTime = System.currentTimeMillis()
         var i = 0
         while (i < 10) { // computation loop
             val currentTime = System.currentTimeMillis()
             if (currentTime >= nextPrintTime) {
                 println("I'm sleeping ${i++} ...")
-                nextPrintTime = currentTime + 500L
+                nextPrintTime += 500L
             }
         }
     }
@@ -613,7 +613,7 @@ The answer is 42
 Completed in 2017 ms
 ```
 
-<!--- TEST FLEXIBLE_TIME -->
+<!--- TEST ARBITRARY_TIME -->
 
 ### Concurrent using async
 
@@ -646,7 +646,7 @@ The answer is 42
 Completed in 1017 ms
 ```
 
-<!--- TEST FLEXIBLE_TIME -->
+<!--- TEST ARBITRARY_TIME -->
 
 This is twice as fast, because we have concurrent execution of two coroutines. 
 Note, that concurrency with coroutines is always explicit.
@@ -678,7 +678,7 @@ The answer is 42
 Completed in 2017 ms
 ```
 
-<!--- TEST FLEXIBLE_TIME -->
+<!--- TEST ARBITRARY_TIME -->
 
 So, we are back to sequential execution, because we _first_ start and await for `one`, _and then_ start and await
 for `two`. It is not the intended use-case for laziness. It is designed as a replacement for
@@ -728,7 +728,7 @@ fun main(args: Array<String>) {
 
 > You can get full code [here](kotlinx-coroutines-core/src/test/kotlin/guide/example-compose-04.kt)
 
-<!--- TEST FLEXIBLE_TIME
+<!--- TEST ARBITRARY_TIME
 The answer is 42
 Completed in 1085 ms
 -->
@@ -749,16 +749,16 @@ to a specific thread, dispatch it to a thread pool, or let it run unconfined. Tr
 fun main(args: Array<String>) = runBlocking<Unit> {
     val jobs = arrayListOf<Job>()
     jobs += launch(Unconfined) { // not confined -- will work with main thread
-        println(" 'Unconfined': I'm working in thread ${Thread.currentThread().name}")
+        println("      'Unconfined': I'm working in thread ${Thread.currentThread().name}")
     }
-    jobs += launch(context) { // context of the parent, runBlocking coroutine
-        println("    'context': I'm working in thread ${Thread.currentThread().name}")
+    jobs += launch(coroutineContext) { // context of the parent, runBlocking coroutine
+        println("'coroutineContext': I'm working in thread ${Thread.currentThread().name}")
     }
     jobs += launch(CommonPool) { // will get dispatched to ForkJoinPool.commonPool (or equivalent)
-        println(" 'CommonPool': I'm working in thread ${Thread.currentThread().name}")
+        println("      'CommonPool': I'm working in thread ${Thread.currentThread().name}")
     }
     jobs += launch(newSingleThreadContext("MyOwnThread")) { // will get its own new thread
-        println("     'newSTC': I'm working in thread ${Thread.currentThread().name}")
+        println("          'newSTC': I'm working in thread ${Thread.currentThread().name}")
     }
     jobs.forEach { it.join() }
 }
@@ -769,15 +769,16 @@ fun main(args: Array<String>) = runBlocking<Unit> {
 It produces the following output (maybe in different order):
 
 ```text
- 'Unconfined': I'm working in thread main
- 'CommonPool': I'm working in thread ForkJoinPool.commonPool-worker-1
-     'newSTC': I'm working in thread MyOwnThread
-    'context': I'm working in thread main
+      'Unconfined': I'm working in thread main
+      'CommonPool': I'm working in thread ForkJoinPool.commonPool-worker-1
+          'newSTC': I'm working in thread MyOwnThread
+'coroutineContext': I'm working in thread main
 ```
 
 <!--- TEST LINES_START_UNORDERED -->
 
-The difference between parent [context][CoroutineScope.context] and [Unconfined] context will be shown later.
+The difference between parent [coroutineContext][CoroutineScope.coroutineContext] and
+[Unconfined] context will be shown later.
 
 ### Unconfined vs confined dispatcher
  
@@ -786,7 +787,7 @@ first suspension point. After suspension it resumes in the thread that is fully 
 suspending function that was invoked. Unconfined dispatcher is appropriate when coroutine does not
 consume CPU time nor updates any shared data (like UI) that is confined to a specific thread. 
 
-On the other side, [context][CoroutineScope.context] property that is available inside the block of any coroutine 
+On the other side, [coroutineContext][CoroutineScope.coroutineContext] property that is available inside the block of any coroutine
 via [CoroutineScope] interface, is a reference to a context of this particular coroutine. 
 This way, a parent context can be inherited. The default context of [runBlocking], in particular,
 is confined to be invoker thread, so inheriting it has the effect of confining execution to
@@ -796,14 +797,14 @@ this thread with a predictable FIFO scheduling.
 fun main(args: Array<String>) = runBlocking<Unit> {
     val jobs = arrayListOf<Job>()
     jobs += launch(Unconfined) { // not confined -- will work with main thread
-        println(" 'Unconfined': I'm working in thread ${Thread.currentThread().name}")
+        println("      'Unconfined': I'm working in thread ${Thread.currentThread().name}")
         delay(500)
-        println(" 'Unconfined': After delay in thread ${Thread.currentThread().name}")
+        println("      'Unconfined': After delay in thread ${Thread.currentThread().name}")
     }
-    jobs += launch(context) { // context of the parent, runBlocking coroutine
-        println("    'context': I'm working in thread ${Thread.currentThread().name}")
+    jobs += launch(coroutineContext) { // context of the parent, runBlocking coroutine
+        println("'coroutineContext': I'm working in thread ${Thread.currentThread().name}")
         delay(1000)
-        println("    'context': After delay in thread ${Thread.currentThread().name}")
+        println("'coroutineContext': After delay in thread ${Thread.currentThread().name}")
     }
     jobs.forEach { it.join() }
 }
@@ -814,16 +815,17 @@ fun main(args: Array<String>) = runBlocking<Unit> {
 Produces the output: 
  
 ```text
- 'Unconfined': I'm working in thread main
-    'context': I'm working in thread main
- 'Unconfined': After delay in thread kotlinx.coroutines.ScheduledExecutor
-    'context': After delay in thread main
+      'Unconfined': I'm working in thread main
+'coroutineContext': I'm working in thread main
+      'Unconfined': After delay in thread kotlinx.coroutines.DefaultExecutor
+'coroutineContext': After delay in thread main
 ```
 
 <!--- TEST LINES_START -->
  
-So, the coroutine that had inherited `context` of `runBlocking {...}` continues to execute in the `main` thread,
-while the unconfined one had resumed in the scheduler thread that [delay] function is using.
+So, the coroutine that had inherited `coroutineContext` of `runBlocking {...}` continues to execute
+in the `main` thread, while the unconfined one had resumed in the default executor thread that [delay]
+function is using.
 
 ### Debugging coroutines and threads
 
@@ -840,11 +842,11 @@ Run the following code with `-Dkotlinx.coroutines.debug` JVM option:
 fun log(msg: String) = println("[${Thread.currentThread().name}] $msg")
 
 fun main(args: Array<String>) = runBlocking<Unit> {
-    val a = async(context) {
+    val a = async(coroutineContext) {
         log("I'm computing a piece of the answer")
         6
     }
-    val b = async(context) {
+    val b = async(coroutineContext) {
         log("I'm computing another piece of the answer")
         7
     }
@@ -910,17 +912,17 @@ same coroutine as you can see in the output below:
 ### Job in the context
 
 The coroutine [Job] is part of its context. The coroutine can retrieve it from its own context 
-using `context[Job]` expression:
+using `coroutineContext[Job]` expression:
 
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
-    println("My job is ${context[Job]}")
+    println("My job is ${coroutineContext[Job]}")
 }
 ```
 
 > You can get full code [here](kotlinx-coroutines-core/src/test/kotlin/guide/example-context-05.kt)
 
-It produces somethine like
+It produces something like
 
 ```
 My job is BlockingCoroutine{Active}@65ae6ba4
@@ -928,11 +930,12 @@ My job is BlockingCoroutine{Active}@65ae6ba4
 
 <!--- TEST lines.size == 1 && lines[0].startsWith("My job is BlockingCoroutine{Active}@") -->
 
-So, [isActive][CoroutineScope.isActive] in [CoroutineScope] is just a convenient shortcut for `context[Job]!!.isActive`.
+So, [isActive][CoroutineScope.isActive] in [CoroutineScope] is just a convenient shortcut for
+`coroutineContext[Job]!!.isActive`.
 
 ### Children of a coroutine
 
-When [context][CoroutineScope.context] of a coroutine is used to launch another coroutine, 
+When [coroutineContext][CoroutineScope.coroutineContext] of a coroutine is used to launch another coroutine,
 the [Job] of the new coroutine becomes
 a _child_ of the parent coroutine's job. When the parent coroutine is cancelled, all its children
 are recursively cancelled, too. 
@@ -948,7 +951,7 @@ fun main(args: Array<String>) = runBlocking<Unit> {
             println("job1: I am not affected by cancellation of the request")
         }
         // and the other inherits the parent context
-        val job2 = launch(context) {
+        val job2 = launch(coroutineContext) {
             println("job2: I am a child of the request coroutine")
             delay(1000)
             println("job2: I will not execute this line if my parent request is cancelled")
@@ -986,9 +989,9 @@ its dispatcher replaced:
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
     // start a coroutine to process some kind of incoming request
-    val request = launch(context) { // use the context of `runBlocking`
+    val request = launch(coroutineContext) { // use the context of `runBlocking`
         // spawns CPU-intensive child job in CommonPool !!! 
-        val job = launch(context + CommonPool) {
+        val job = launch(coroutineContext + CommonPool) {
             println("job: I am a child of the request coroutine, but with a different dispatcher")
             delay(1000)
             println("job: I will not execute this line if my parent request is cancelled")
@@ -1019,7 +1022,7 @@ Automatically assigned ids are good when coroutines log often and you just need 
 coming from the same coroutine. However, when coroutine is tied to the processing of a specific request
 or doing some specific background task, it is better to name it explicitly for debugging purposes.
 [CoroutineName] serves the same function as a thread name. It'll get displayed in the thread name that
-is executing this coroutine when debugging more is turned on.
+is executing this coroutine when debugging mode is turned on.
 
 The following example demonstrates this concept:
 
@@ -1065,7 +1068,7 @@ and update data, do animations, etc. All of these coroutines must be cancelled w
 to avoid memory leaks. 
   
 We can manage a lifecycle of our coroutines by creating an instance of [Job] that is tied to 
-the lifecycle of our activity. A job instance is created using [Job()][Job.invoke] factory function
+the lifecycle of our activity. A job instance is created using [`Job()`][Job] factory function
 as the following example shows. We need to make sure that all the coroutines are started 
 with this job in their context and then a single invocation of [Job.cancel] terminates them all.
 
@@ -1075,7 +1078,7 @@ fun main(args: Array<String>) = runBlocking<Unit> {
     // now launch ten coroutines for a demo, each working for a different time
     val coroutines = List(10) { i ->
         // they are all children of our job object
-        launch(context + job) { // we use the context of main runBlocking thread, but with our own job object 
+        launch(coroutineContext + job) { // we use the context of main runBlocking thread, but with our own job object
             delay(i * 200L) // variable delay 0ms, 200ms, 400ms, ... etc
             println("Coroutine $i is done")
         }
@@ -1305,11 +1308,11 @@ running the whole pipeline in the context of the main thread:
 
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
-    var cur = numbersFrom(context, 2)
+    var cur = numbersFrom(coroutineContext, 2)
     for (i in 1..10) {
         val prime = cur.receive()
         println(prime)
-        cur = filter(context, cur, prime)
+        cur = filter(coroutineContext, cur, prime)
     }
 }
 ```
@@ -1371,13 +1374,13 @@ fun launchProcessor(id: Int, channel: ReceiveChannel<Int>) = launch(CommonPool) 
 }
 ```
 
-Now let us launch five processors and let them work for a second. See what happens:
+Now let us launch five processors and let them work for almost a second. See what happens:
 
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
     val producer = produceNumbers()
     repeat(5) { launchProcessor(it, producer) }
-    delay(1000)
+    delay(950)
     producer.cancel() // cancel producer coroutine and thus kill them all
 }
 ```
@@ -1426,8 +1429,8 @@ Now, let us see what happens if we launch a couple of coroutines sending strings
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
     val channel = Channel<String>()
-    launch(context) { sendString(channel, "foo", 200L) }
-    launch(context) { sendString(channel, "BAR!", 500L) }
+    launch(coroutineContext) { sendString(channel, "foo", 200L) }
+    launch(coroutineContext) { sendString(channel, "BAR!", 500L) }
     repeat(6) { // receive first six
         println(channel.receive())
     }
@@ -1455,7 +1458,7 @@ The channels shown so far had no buffer. Unbuffered channels transfer elements w
 meet each other (aka rendezvous). If send is invoked first, then it is suspended until receive is invoked, 
 if receive is invoked first, it is suspended until send is invoked.
 
-Both [Channel()][Channel.invoke] factory function and [produce] builder take an optional `capacity` parameter to 
+Both [`Channel()`][Channel] factory function and [produce] builder take an optional `capacity` parameter to
 specify _buffer size_. Buffer allows senders to send multiple elements before suspending, 
 similar to the `BlockingQueue` with a specified capacity, which blocks when buffer is full.
 
@@ -1464,7 +1467,7 @@ Take a look at the behavior of the following code:
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
     val channel = Channel<Int>(4) // create buffered channel
-    launch(context) { // launch sender coroutine
+    launch(coroutineContext) { // launch sender coroutine
         repeat(10) {
             println("Sending $it") // print before sending each element
             channel.send(it) // will suspend when buffer is full
@@ -1504,8 +1507,8 @@ data class Ball(var hits: Int)
 
 fun main(args: Array<String>) = runBlocking<Unit> {
     val table = Channel<Ball>() // a shared table
-    launch(context) { player("ping", table) }
-    launch(context) { player("pong", table) }
+    launch(coroutineContext) { player("ping", table) }
+    launch(coroutineContext) { player("pong", table) }
     table.send(Ball(0)) // serve the ball
     delay(1000) // delay 1 second
     table.receive() // game over, grab the ball
@@ -1787,31 +1790,47 @@ There is an [actor] coroutine builder that conveniently combines actor's mailbox
 scope to receive messages from and combines the send channel into the resulting job object, so that a 
 single reference to the actor can be carried around as its handle.
 
+The first step of using an actor is to define a class of messages that an actor is going to process.
+Kotlin's [sealed classes](https://kotlinlang.org/docs/reference/sealed-classes.html) are well suited for that purpose.
+We define `CounterMsg` sealed class with `IncCounter` message to increment a counter and `GetCounter` message
+to get its value. The later needs to send a response. A [CompletableDeferred] communication
+primitive, that represents a single value that will be known (communicated) in the future,
+is used here for that purpose.
+
 ```kotlin
 // Message types for counterActor
 sealed class CounterMsg
 object IncCounter : CounterMsg() // one-way message to increment counter
-class GetCounter(val response: SendChannel<Int>) : CounterMsg() // a request with reply
+class GetCounter(val response: CompletableDeferred<Int>) : CounterMsg() // a request with reply
+```
 
+Then we define a function that launches an actor using an [actor] coroutine builder:
+
+```kotlin
 // This function launches a new counter actor
 fun counterActor() = actor<CounterMsg>(CommonPool) {
     var counter = 0 // actor state
     for (msg in channel) { // iterate over incoming messages
         when (msg) {
             is IncCounter -> counter++
-            is GetCounter -> msg.response.send(counter)
+            is GetCounter -> msg.response.complete(counter)
         }
     }
 }
+```
 
+The main code is straightforward:
+
+```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
     val counter = counterActor() // create the actor
     massiveRun(CommonPool) {
         counter.send(IncCounter)
     }
-    val response = Channel<Int>()
+    // send a message to get a counter value from an actor
+    val response = CompletableDeferred<Int>()
     counter.send(GetCounter(response))
-    println("Counter = ${response.receive()}")
+    println("Counter = ${response.await()}")
     counter.close() // shutdown the actor
 }
 ```
@@ -1893,8 +1912,8 @@ Let us run it all seven times:
 
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
-    val fizz = fizz(context)
-    val buzz = buzz(context)
+    val fizz = fizz(coroutineContext)
+    val buzz = buzz(coroutineContext)
     repeat(7) {
         selectFizzBuzz(fizz, buzz)
     }
@@ -1948,10 +1967,10 @@ channel `b` that produces "World" four times:
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
     // we are using the context of the main thread in this example for predictability ... 
-    val a = produce<String>(context) { 
+    val a = produce<String>(coroutineContext) {
         repeat(4) { send("Hello $it") }
     }
-    val b = produce<String>(context) { 
+    val b = produce<String>(coroutineContext) {
         repeat(4) { send("World $it") }
     }
     repeat(8) { // print first eight results
@@ -2012,7 +2031,7 @@ Consumer is going to be quite slow, taking 250 ms to process each number:
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
     val side = Channel<Int>() // allocate side channel
-    launch(context) { // this is a very fast consumer for the side channel
+    launch(coroutineContext) { // this is a very fast consumer for the side channel
         side.consumeEach { println("Side channel has $it") }
     }
     produceNumbers(side).consumeEach { 
@@ -2145,7 +2164,7 @@ data to it:
 ```kotlin
 fun main(args: Array<String>) = runBlocking<Unit> {
     val chan = Channel<Deferred<String>>() // the channel for test
-    launch(context) { // launch printing coroutine
+    launch(coroutineContext) { // launch printing coroutine
         for (s in switchMapDeferreds(chan)) 
             println(s) // print each received string
     }
@@ -2187,7 +2206,7 @@ Channel was closed
 [launch]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/launch.html
 [delay]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/delay.html
 [runBlocking]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/run-blocking.html
-[Job]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-job/index.html
+[Job]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-job.html
 [CancellationException]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-cancellation-exception.html
 [yield]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/yield.html
 [CoroutineScope.isActive]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-coroutine-scope/is-active.html
@@ -2202,24 +2221,23 @@ Channel was closed
 [Job.start]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-job/start.html
 [CommonPool]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-common-pool/index.html
 [CoroutineDispatcher]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-coroutine-dispatcher/index.html
-[CoroutineScope.context]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-coroutine-scope/context.html
+[CoroutineScope.coroutineContext]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-coroutine-scope/coroutine-context.html
 [Unconfined]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-unconfined/index.html
 [newCoroutineContext]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/new-coroutine-context.html
 [CoroutineName]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-coroutine-name/index.html
-[Job.invoke]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-job/invoke.html
 [Job.cancel]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-job/cancel.html
+[CompletableDeferred]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/-completable-deferred.html
 <!--- INDEX kotlinx.coroutines.experimental.sync -->
-[Mutex]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.sync/-mutex/index.html
+[Mutex]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.sync/-mutex.html
 [Mutex.lock]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.sync/-mutex/lock.html
 [Mutex.unlock]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.sync/-mutex/unlock.html
 <!--- INDEX kotlinx.coroutines.experimental.channels -->
-[Channel]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-channel/index.html
+[Channel]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-channel.html
 [SendChannel.send]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-send-channel/send.html
 [ReceiveChannel.receive]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-receive-channel/receive.html
 [SendChannel.close]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-send-channel/close.html
 [produce]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/produce.html
 [consumeEach]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/consume-each.html
-[Channel.invoke]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/-channel/invoke.html
 [actor]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.channels/actor.html
 <!--- INDEX kotlinx.coroutines.experimental.selects -->
 [select]: https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental.selects/select.html

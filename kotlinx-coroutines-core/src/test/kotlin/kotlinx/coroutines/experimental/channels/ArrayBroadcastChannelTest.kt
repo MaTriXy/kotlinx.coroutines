@@ -19,7 +19,7 @@ package kotlinx.coroutines.experimental.channels
 import kotlinx.coroutines.experimental.*
 import org.hamcrest.core.IsEqual
 import org.hamcrest.core.IsNull
-import org.junit.Assert.*
+import org.junit.Assert.assertThat
 import org.junit.Test
 
 class ArrayBroadcastChannelTest : TestBase() {
@@ -28,8 +28,8 @@ class ArrayBroadcastChannelTest : TestBase() {
         expect(1)
         val broadcast = ArrayBroadcastChannel<Int>(1)
         assertThat(broadcast.isClosedForSend, IsEqual(false))
-        val first = broadcast.open()
-        launch(context, CoroutineStart.UNDISPATCHED) {
+        val first = broadcast.openSubscription()
+        launch(coroutineContext, CoroutineStart.UNDISPATCHED) {
             expect(2)
             assertThat(first.receive(), IsEqual(1)) // suspends
             assertThat(first.isClosedForReceive, IsEqual(false))
@@ -46,8 +46,8 @@ class ArrayBroadcastChannelTest : TestBase() {
         expect(4)
         yield() // to the first receiver
         expect(6)
-        val second = broadcast.open()
-        launch(context, CoroutineStart.UNDISPATCHED) {
+        val second = broadcast.openSubscription()
+        launch(coroutineContext, CoroutineStart.UNDISPATCHED) {
             expect(7)
             assertThat(second.receive(), IsEqual(2)) // suspends
             assertThat(second.isClosedForReceive, IsEqual(false))
@@ -72,8 +72,8 @@ class ArrayBroadcastChannelTest : TestBase() {
     fun testSendSuspend() = runBlocking {
         expect(1)
         val broadcast = ArrayBroadcastChannel<Int>(1)
-        val first = broadcast.open()
-        launch(context) {
+        val first = broadcast.openSubscription()
+        launch(coroutineContext) {
             expect(4)
             assertThat(first.receive(), IsEqual(1))
             expect(5)
@@ -91,10 +91,10 @@ class ArrayBroadcastChannelTest : TestBase() {
     fun testConcurrentSendCompletion() = runBlocking {
         expect(1)
         val broadcast = ArrayBroadcastChannel<Int>(1)
-        val sub = broadcast.open()
+        val sub = broadcast.openSubscription()
         // launch 3 concurrent senders (one goes buffer, two other suspend)
         for (x in 1..3) {
-            launch(context, CoroutineStart.UNDISPATCHED) {
+            launch(coroutineContext, CoroutineStart.UNDISPATCHED) {
                 expect(x + 1)
                 broadcast.send(x)
             }
@@ -111,5 +111,25 @@ class ArrayBroadcastChannelTest : TestBase() {
         assertThat(sub.receiveOrNull(), IsNull())
         assertThat(sub.isClosedForReceive, IsEqual(true))
         finish(7)
+    }
+
+    @Test
+    fun testForgetUnsubscribed() = runBlocking {
+        expect(1)
+        val broadcast = ArrayBroadcastChannel<Int>(1)
+        broadcast.send(1)
+        broadcast.send(2)
+        broadcast.send(3)
+        expect(2) // should not suspend anywhere above
+        val sub = broadcast.openSubscription()
+        launch(coroutineContext, CoroutineStart.UNDISPATCHED) {
+            expect(3)
+            assertThat(sub.receive(), IsEqual(4)) // suspends
+            expect(5)
+        }
+        expect(4)
+        broadcast.send(4) // sends
+        yield()
+        finish(6)
     }
 }

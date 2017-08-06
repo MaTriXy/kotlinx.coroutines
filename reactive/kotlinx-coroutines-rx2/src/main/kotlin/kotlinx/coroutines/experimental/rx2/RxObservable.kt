@@ -58,9 +58,9 @@ public fun <T> rxObservable(
 }
 
 private class RxObservableCoroutine<T>(
-    override val parentContext: CoroutineContext,
+    parentContext: CoroutineContext,
     private val subscriber: ObservableEmitter<T>
-) : AbstractCoroutine<Unit>(true), ProducerScope<T>, Cancellable {
+) : AbstractCoroutine<Unit>(parentContext, true), ProducerScope<T>, Cancellable {
     override val channel: SendChannel<T> get() = this
 
     // Mutex is locked when while subscriber.onXXX is being invoked
@@ -113,7 +113,7 @@ private class RxObservableCoroutine<T>(
     // assert: mutex.isLocked()
     private fun doLockedNext(elem: T) {
         // check if already closed for send
-        if (isCompleted) {
+        if (!isActive) {
             doLockedSignalCompleted()
             throw sendException()
         }
@@ -123,21 +123,21 @@ private class RxObservableCoroutine<T>(
         } catch (e: Throwable) {
             try {
                 if (!cancel(e))
-                    handleCoroutineException(context, e)
+                    handleCoroutineException(coroutineContext, e)
             } finally {
                 doLockedSignalCompleted()
             }
             throw sendException()
         }
         /*
-           There is no sense to check for `isCompleted` before doing `unlock`, because completion might
-           happen after this check and before `unlock` (see `afterCompleted` that does not do anything
+           There is no sense to check for `isActive` before doing `unlock`, because cancellation/completion might
+           happen after this check and before `unlock` (see `onCancellation` that does not do anything
            if it fails to acquire the lock that we are still holding).
            We have to recheck `isCompleted` after `unlock` anyway.
          */
         mutex.unlock()
-        // recheck isCompleted
-        if (isCompleted && mutex.tryLock())
+        // recheck isActive
+        if (!isActive && mutex.tryLock())
             doLockedSignalCompleted()
     }
 
@@ -146,14 +146,14 @@ private class RxObservableCoroutine<T>(
         try {
             if (signal >= CLOSED) {
                 signal = SIGNALLED // we'll signal onError/onCompleted (that the final state -- no CAS needed)
-                val state = this.state
+                val cause = getCompletionCause()
                 try {
-                    if (state is CompletedExceptionally && state.cause != null)
-                        subscriber.onError(state.cause)
+                    if (cause != null)
+                        subscriber.onError(cause)
                     else
                         subscriber.onComplete()
                 } catch (e: Throwable) {
-                    handleCoroutineException(context, e)
+                    handleCoroutineException(coroutineContext, e)
                 }
             }
         } finally {
@@ -161,7 +161,7 @@ private class RxObservableCoroutine<T>(
         }
     }
 
-    override fun afterCompletion(state: Any?, mode: Int) {
+    override fun onCancellation() {
         if (!SIGNAL.compareAndSet(this, OPEN, CLOSED)) return // abort, other thread invoked doLockedSignalCompleted
         if (mutex.tryLock()) // if we can acquire the lock
             doLockedSignalCompleted()
