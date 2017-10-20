@@ -23,11 +23,11 @@
 
     <groupId>org.jetbrains.kotlinx</groupId>
     <artifactId>kotlinx-coroutines</artifactId>
-    <version>0.17-SNAPSHOT</version>
+    <version>0.19.1-SNAPSHOT</version>
     <packaging>pom</packaging>
 
+    <name>kotlinx-coroutines</name>
     <description>Coroutines support libraries for Kotlin 1.1</description>
-
     <url>https://github.com/Kotlin/kotlinx.coroutines/</url>
 
     <licenses>
@@ -41,12 +41,14 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <kotlin.version>1.1.3-2</kotlin.version>
-        <dokka.version>0.9.15-eap-1</dokka.version>
+        <kotlin.version>1.1.51</kotlin.version>
+        <dokka.version>0.9.15</dokka.version>
         <junit.version>4.12</junit.version>
+        <atomicfu.version>0.8</atomicfu.version>
         <maven.compiler.source>1.6</maven.compiler.source>
         <maven.compiler.target>1.6</maven.compiler.target>
         <core.docs.url>https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/</core.docs.url>
+        <core.docs.file>${project.basedir}/../../core/kotlinx-coroutines-core/target/dokka/kotlinx-coroutines-core/package-list</core.docs.file>
     </properties>
 
     <prerequisites>
@@ -70,6 +72,15 @@
 
     <repositories>
         <repository>
+            <id>central</id>
+            <url>http://jcenter.bintray.com</url>
+        </repository>
+        <repository>
+            <id>bintray-kotlin-kotlinx</id>
+            <name>bintray</name>
+            <url>http://kotlin.bintray.com/kotlinx</url>
+        </repository>
+        <repository>
             <id>bintray-kotlin-eap</id>
             <name>bintray-kotlin-eap</name>
             <url>http://dl.bintray.com/kotlin/kotlin-eap</url>
@@ -77,6 +88,15 @@
     </repositories>
 
     <pluginRepositories>
+        <pluginRepository>
+            <id>central</id>
+            <url>http://jcenter.bintray.com</url>
+        </pluginRepository>
+        <pluginRepository>
+            <id>bintray-kotlin-kotlinx</id>
+            <name>bintray</name>
+            <url>http://kotlin.bintray.com/kotlinx</url>
+        </pluginRepository>
         <pluginRepository>
             <id>bintray-kotlin-eap</id>
             <name>bintray-kotlin-eap</name>
@@ -97,10 +117,11 @@
     </distributionManagement>
 
     <modules>
-        <module>kotlinx-coroutines-core</module>
         <module>benchmarks</module>
         <module>site</module>
         <module>knit</module>
+        <module>core/kotlinx-coroutines-core</module>
+        <module>core/kotlinx-coroutines-io</module>
         <module>reactive/kotlinx-coroutines-reactive</module>
         <module>reactive/kotlinx-coroutines-reactor</module>
         <module>reactive/kotlinx-coroutines-rx1</module>
@@ -112,6 +133,7 @@
         <module>integration/kotlinx-coroutines-jdk8</module>
         <module>integration/kotlinx-coroutines-nio</module>
         <module>integration/kotlinx-coroutines-guava</module>
+        <module>integration/kotlinx-coroutines-quasar</module>
     </modules>
 
     <dependencies>
@@ -126,6 +148,12 @@
             <artifactId>junit</artifactId>
             <version>${junit.version}</version>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlinx</groupId>
+            <artifactId>atomicfu</artifactId>
+            <version>${atomicfu.version}</version>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 
@@ -145,7 +173,7 @@
                     </execution>
                 </executions>
             </plugin>
-
+            <!-- compile Kotlin files to staging directory -->
             <plugin>
                 <groupId>org.jetbrains.kotlin</groupId>
                 <artifactId>kotlin-maven-plugin</artifactId>
@@ -156,6 +184,9 @@
                         <goals>
                             <goal>compile</goal>
                         </goals>
+                        <configuration>
+                            <output>${project.build.directory}/classes-atomicfu</output>
+                        </configuration>
                     </execution>
                     <execution>
                         <id>test-compile</id>
@@ -171,10 +202,27 @@
                     </args>
                 </configuration>
             </plugin>
+            <!-- transform classes with AtomicFU plugin -->
+            <plugin>
+                <groupId>org.jetbrains.kotlinx</groupId>
+                <artifactId>atomicfu-maven-plugin</artifactId>
+                <version>${atomicfu.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>transform</goal>
+                        </goals>
+                        <configuration>
+                            <verbose>true</verbose>
+                            <input>${project.build.directory}/classes-atomicfu</input>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- documentation -->
             <plugin>
                 <groupId>org.jetbrains.dokka</groupId>
                 <artifactId>dokka-maven-plugin</artifactId>
-                <version>${dokka.version}</version>
                 <executions>
                     <execution>
                         <phase>pre-site</phase>
@@ -187,7 +235,7 @@
                     <sourceLinks>
                         <link>
                             <dir>${project.basedir}/src/main/kotlin</dir>
-                            <url>http://github.com/kotlin/kotlinx.coroutines/tree/master/${project.artifactId}/src/main/kotlin</url>
+                            <url>http://github.com/kotlin/kotlinx.coroutines/tree/master/${subdir}/${project.artifactId}/src/main/kotlin</url>
                             <urlSuffix>#L</urlSuffix>
                         </link>
                     </sourceLinks>
@@ -205,18 +253,67 @@
                     <skip>true</skip>
                 </configuration>
             </plugin>
+            <!-- enforcer -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-versions</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>1.8.0</version>
+                                </requireJavaVersion>
+                                <requirePluginVersions>
+                                    <message>Always define plugin versions!</message>
+                                    <banLatest>true</banLatest>
+                                    <banRelease>true</banRelease>
+                                    <banSnapshots>false</banSnapshots>
+                                </requirePluginVersions>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
 
         <pluginManagement>
             <plugins>
+                <!-- Kotlin -->
                 <plugin>
                     <groupId>org.jetbrains.kotlin</groupId>
                     <artifactId>kotlin-maven-plugin</artifactId>
                     <version>${kotlin.version}</version>
                 </plugin>
+                <!-- Dokka -->
+                <plugin>
+                    <groupId>org.jetbrains.dokka</groupId>
+                    <artifactId>dokka-maven-plugin</artifactId>
+                    <version>${dokka.version}</version>
+                </plugin>
+                <!-- Maven -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-enforcer-plugin</artifactId>
+                    <version>3.0.0-M1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-clean-plugin</artifactId>
+                    <version>2.5</version>
+                </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-source-plugin</artifactId>
+                    <version>2.4</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-install-plugin</artifactId>
                     <version>2.4</version>
                 </plugin>
                 <plugin>
@@ -239,7 +336,92 @@
                     <artifactId>maven-site-plugin</artifactId>
                     <version>3.3</version>
                 </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>3.0.2</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <version>2.8</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-resources-plugin</artifactId>
+                    <version>2.6</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-antrun-plugin</artifactId>
+                    <version>1.3</version>
+                </plugin>
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <!-- Profile to build against snapshot version of Kotlin compiler -->
+        <profile>
+            <id>kotlin-snapshot</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+            </activation>
+
+            <properties>
+                <kotlin.version>1.1-SNAPSHOT</kotlin.version>
+            </properties>
+
+            <pluginRepositories>
+                <pluginRepository>
+                    <id>oss-p</id>
+                    <url>https://oss.sonatype.org/content/repositories/snapshots</url>
+                </pluginRepository>
+            </pluginRepositories>
+            <repositories>
+                <repository>
+                    <id>oss</id>
+                    <url>https://oss.sonatype.org/content/repositories/snapshots</url>
+                </repository>
+            </repositories>
+        </profile>
+        <!-- Profile to attach javadocs with dokka -->
+        <profile>
+            <id>javadoc</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+            </activation>
+            <!-- documentation -->
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jetbrains.dokka</groupId>
+                        <artifactId>dokka-maven-plugin</artifactId>
+                        <executions>
+                            <!-- build dokka htmls and package list (for refs) -->
+                            <execution>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>dokka</goal>
+                                </goals>
+                            </execution>
+                            <!-- attach javadoc with dokka -->
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>javadocJar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

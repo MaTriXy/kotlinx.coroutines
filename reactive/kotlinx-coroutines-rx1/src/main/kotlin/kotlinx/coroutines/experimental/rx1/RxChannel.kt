@@ -16,12 +16,13 @@
 
 package kotlinx.coroutines.experimental.rx1
 
+import kotlinx.atomicfu.atomic
+import kotlinx.atomicfu.loop
 import kotlinx.coroutines.experimental.channels.LinkedListChannel
 import kotlinx.coroutines.experimental.channels.SubscriptionReceiveChannel
 import rx.Observable
 import rx.Subscriber
 import rx.Subscription
-import java.util.concurrent.atomic.AtomicIntegerFieldUpdater
 
 /**
  * Subscribes to this [Observable] and returns a channel to receive elements emitted by it.
@@ -58,12 +59,18 @@ public operator fun <T> Observable<T>.iterator() = openSubscription().iterator()
 /**
  * Subscribes to this [Observable] and performs the specified action for each received element.
  */
-// :todo: make it inline when this bug is fixed: https://youtrack.jetbrains.com/issue/KT-16448
-public suspend fun <T> Observable<T>.consumeEach(action: suspend (T) -> Unit) {
+public inline suspend fun <T> Observable<T>.consumeEach(action: (T) -> Unit) {
     openSubscription().use { channel ->
         for (x in channel) action(x)
     }
 }
+
+/**
+ * @suppress: **Deprecated**: binary compatibility with old code
+ */
+@Deprecated("binary compatibility with old code", level = DeprecationLevel.HIDDEN)
+public suspend fun <T> Observable<T>.consumeEach(action: suspend (T) -> Unit) =
+    consumeEach { action(it) }
 
 private class SubscriptionChannel<T> : LinkedListChannel<T>(), SubscriptionReceiveChannel<T> {
     @JvmField
@@ -73,30 +80,21 @@ private class SubscriptionChannel<T> : LinkedListChannel<T>(), SubscriptionRecei
     @JvmField
     var subscription: Subscription? = null
 
-    @Volatile
-    @JvmField
-    var balance = 0 // request balance from cancelled receivers
-
-    private companion object {
-        @JvmField
-        val BALANCE: AtomicIntegerFieldUpdater<SubscriptionChannel<*>> =
-            AtomicIntegerFieldUpdater.newUpdater(SubscriptionChannel::class.java, "balance")
-    }
+    val _balance = atomic(0) // request balance from cancelled receivers
 
     // AbstractChannel overrides
     override fun onEnqueuedReceive() {
-        while (true) { // lock-free loop on balance
-            val balance = this.balance
+        _balance.loop { balance ->
             if (balance == 0) {
                 subscriber.requestOne()
                 return
             }
-            if (BALANCE.compareAndSet(this, balance, balance - 1)) return
+            if (_balance.compareAndSet(balance, balance - 1)) return
         }
     }
 
     override fun onCancelledReceive() {
-        BALANCE.incrementAndGet(this)
+        _balance.incrementAndGet()
     }
 
     override fun afterClose(cause: Throwable?) {

@@ -1,5 +1,83 @@
 # Change log for kotlinx.coroutines 
 
+## Version 0.19.1
+
+* Failed parent Job cancels all children jobs, then waits for them them.
+  This makes parent-child hierarchies easier to get working right without
+  having to use `try/catch` or other exception handlers.  
+* Fixed a race in `ArrayBroadcastChannel` between `send` and `openChannel` invocations
+  (see #138).   
+* Fixed quite a rare race in `runBlocking` that resulted in `AssertionError`. 
+  Unfortunately, cannot write a reliable stress-test to reproduce it. 
+* Updated Reactor support to leverage Bismuth release train 
+  (contributed by @sdeleuze, see PR #141)
+
+## Version 0.19
+
+* This release is published to Maven Central.
+* `DefaultDispatcher` is introduced (see #136):
+  * `launch`, `async`, `produce`, `actor` and other integration-specific coroutine builders now use 
+    `DefaultDispatcher` as the default value for their `context` parameter.
+  * When a context is explicitly specified, `newCoroutineContext` function checks if there is any
+    interceptor/dispatcher defined in the context and uses `DefaultDispatcher` if there is none.  
+  * `DefaultDispatcher` is currently defined to be equal to `CommonPool`.     
+  * Examples in the [guide](coroutines-guide.md) now start with `launch { ... }` code and explanation on the nature
+    and the need for coroutine context starts in "Coroutine context and dispatchers" section.  
+* Parent coroutines now wait for their children (see #125):
+  * Job _completing_ state is introduced in documentation as a state in which parent coroutine waits for its children.
+  * `Job.attachChild` and `Job.cancelChildren` are introduced.
+  * `Job.join` now always checks cancellation status of invoker coroutine for predictable behavior when joining
+     failed child coroutine. 
+  * `Job.cancelAndJoin` extension is introduced.    
+  * `CoroutineContext.cancel` and `CoroutineContext.cancelChildren` extensions are introduced for convenience. 
+  * `withTimeout`/`withTimeoutOrNull` blocks become proper coroutines that have `CoroutineScope` and wait for children, too.
+  * Diagnostics in cancellation and unexpected exception messages are improved, 
+    coroutine name is included in debug mode.
+  * Fixed cancellable suspending functions to throw `CancellationException` (as was documented before) even when 
+    the coroutine is cancelled with another application-specific exception.
+  * `JobCancellationException` is introduced as a specific subclass of `CancellationException` which is 
+    used for coroutines that are cancelled without cause and to wrap application-specific exceptions.   
+  * `Job.getCompletionException` is renamed to `Job.getCancellationException` and return a wrapper exception if needed.
+  * Introduced `Deferred.getCompletionExceptionOrNull` to get not-wrapped exception result of `async` task.
+  * Updated docs for `Job` & `Deferred` to explain parent/child relations.
+* `select` expression is modularized:
+  * `SelectClause(0,1,2)` interfaces are introduced, so that synchronization
+    constructs can define their select clauses without having to modify
+    the source of the `SelectBuilder` in `kotlinx-corounes-core` module.
+  * `Job.onJoin`, `Deferred.onAwait`, `Mutex.onLock`, `SendChannel.onSend`, `ReceiveChannel.onReceive`, etc
+    that were functions before are now properties returning the corresponding select clauses. Old functions
+    are left in bytecode for backwards compatibility on use-site, but any outside code that was implementing those 
+    interfaces by itself must be updated.  
+  * This opens road to moving channels into a separate module in future updates.
+* Renamed `TimeoutException` to `TimeoutCancellationException` (old name is deprecated).  
+* Fixed various minor problems:    
+  * JavaFx toolkit is now initialized by `JavaFx` context (see #108).
+  * Fixed lost ACC_STATIC on <clinit> methods (see #116).
+  * Fixed link to source code from documentation (see #129).
+  * Fixed `delay` in arbitrary contexts (see #133).
+* `kotlinx-coroutines-io` module is introduced. It is a work-in-progress on `ByteReadChannel` and `ByteWriteChannel`
+   interfaces, their implementations, and related classes to enable convenient coroutine integration with various 
+   asynchronous I/O libraries and sockets. It is currently _unstable_ and **will change** in the next release.  
+
+## Version 0.18
+
+* Kotlin 1.1.4 is required to use this version, which enables:
+  * `withLock` and `consumeEach` functions are now inline suspend functions.
+  * `JobSupport` class implementation is optimized (one fewer field).
+* `TimeoutException` is public (see #89).
+* Improvements to `Mutex` (courtesy of @fvasco):
+  * Introduced `holdsLock` (see #92).
+  * Improved documentation on `Mutex` fairness (see #90).
+* Fixed NPE when `ArrayBroadcastChannel` is closed concurrently with receive (see #97).
+* Fixed bug in internal class LockFreeLinkedList that resulted in ISE under stress in extremely rare circumstances.
+* Integrations:
+  * [quasar](integration/kotlinx-coroutines-quasar): Introduced integration with suspendable JVM functions
+    that are instrumented with [Parallel Universe Quasar](http://docs.paralleluniverse.co/quasar/) 
+    (thanks to the help of @pron). 
+  * [reactor](reactive/kotlinx-coroutines-reactor): Replaced deprecated `setCancellation` with `onDipose` and 
+    updated to Aluminium-SR3 release (courtesy of @yxf07, see #96) 
+  * [jdk8](integration/kotlinx-coroutines-jdk8): Added adapters for `java.time` classes (courtesy of @fvasco, see #93)     
+
 ## Version 0.17
 
 * `CompletableDeferred` is introduced as a set-once event-like communication primitive (see #70).
