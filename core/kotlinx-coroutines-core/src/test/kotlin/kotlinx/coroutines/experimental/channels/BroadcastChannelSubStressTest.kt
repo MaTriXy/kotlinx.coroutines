@@ -47,6 +47,7 @@ class BroadcastChannelSubStressTest(
 
     @Test
     fun testStress() = runBlocking {
+        println("--- BroadcastChannelSubStressTest $kind")
         val ctx = coroutineContext + CommonPool
         val sender =
             launch(context = ctx + CoroutineName("Sender")) {
@@ -61,14 +62,19 @@ class BroadcastChannelSubStressTest(
                     broadcast.openSubscription().use { sub ->
                         val i = sub.receive()
                         check(i >= last) { "Last was $last, got $i" }
+                        if (!kind.isConflated) check(i != last) { "Last was $last, got it again" }
                         receivedTotal.incrementAndGet()
                         last = i
                     }
                 }
             }
+        var prevSent = -1L
         repeat(nSeconds) { sec ->
             delay(1000)
-            println("${sec + 1}: Sent ${sentTotal.get()}, received ${receivedTotal.get()}")
+            val curSent = sentTotal.get()
+            println("${sec + 1}: Sent $curSent, received ${receivedTotal.get()}")
+            check(curSent > prevSent) { "Send stalled at $curSent events" }
+            prevSent = curSent
         }
         withTimeout(5, TimeUnit.SECONDS) {
             sender.cancelAndJoin()
