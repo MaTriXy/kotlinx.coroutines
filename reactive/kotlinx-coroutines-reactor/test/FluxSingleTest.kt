@@ -1,20 +1,24 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
+package kotlinx.coroutines.reactor
 
-package kotlinx.coroutines.experimental.reactor
-
-import kotlinx.coroutines.experimental.*
-import kotlinx.coroutines.experimental.reactive.*
+import kotlinx.coroutines.testing.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.reactive.*
 import org.junit.*
-import org.junit.Assert.*
+import org.junit.Test
 import reactor.core.publisher.*
 import java.time.Duration.*
+import kotlin.test.*
 
-class FluxSingleTest {
+class FluxSingleTest : TestBase() {
+
+    @Before
+    fun setup() {
+        ignoreLostThreads("parallel-")
+    }
+
     @Test
     fun testSingleNoWait() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             send("OK")
         }
 
@@ -30,7 +34,7 @@ class FluxSingleTest {
 
     @Test
     fun testSingleEmitAndAwait() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             send(Flux.just("O").awaitSingle() + "K")
         }
 
@@ -41,7 +45,7 @@ class FluxSingleTest {
 
     @Test
     fun testSingleWithDelay() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             send(Flux.just("O").delayElements(ofMillis(50)).awaitSingle() + "K")
         }
 
@@ -52,7 +56,7 @@ class FluxSingleTest {
 
     @Test
     fun testSingleException() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             send(Flux.just("O", "K").awaitSingle() + "K")
         }
 
@@ -63,7 +67,7 @@ class FluxSingleTest {
 
     @Test
     fun testAwaitFirst() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             send(Flux.just("O", "#").awaitFirst() + "K")
         }
 
@@ -74,7 +78,7 @@ class FluxSingleTest {
 
     @Test
     fun testAwaitFirstOrDefault() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             send(Flux.empty<String>().awaitFirstOrDefault("O") + "K")
         }
 
@@ -85,7 +89,7 @@ class FluxSingleTest {
 
     @Test
     fun testAwaitFirstOrDefaultWithValues() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             send(Flux.just("O", "#").awaitFirstOrDefault("!") + "K")
         }
 
@@ -96,7 +100,7 @@ class FluxSingleTest {
 
     @Test
     fun testAwaitFirstOrNull() {
-        val flux = GlobalScope.flux<String> {
+        val flux = flux<String?> {
             send(Flux.empty<String>().awaitFirstOrNull() ?: "OK")
         }
 
@@ -107,7 +111,7 @@ class FluxSingleTest {
 
     @Test
     fun testAwaitFirstOrNullWithValues() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             send((Flux.just("O", "#").awaitFirstOrNull() ?: "!") + "K")
         }
 
@@ -118,7 +122,7 @@ class FluxSingleTest {
 
     @Test
     fun testAwaitFirstOrElse() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             send(Flux.empty<String>().awaitFirstOrElse { "O" } + "K")
         }
 
@@ -129,7 +133,7 @@ class FluxSingleTest {
 
     @Test
     fun testAwaitFirstOrElseWithValues() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             send(Flux.just("O", "#").awaitFirstOrElse { "!" } + "K")
         }
 
@@ -140,7 +144,7 @@ class FluxSingleTest {
 
     @Test
     fun testAwaitLast() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             send(Flux.just("#", "O").awaitLast() + "K")
         }
 
@@ -151,7 +155,7 @@ class FluxSingleTest {
 
     @Test
     fun testExceptionFromObservable() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             try {
                 send(Flux.error<String>(RuntimeException("O")).awaitFirst())
             } catch (e: RuntimeException) {
@@ -166,8 +170,8 @@ class FluxSingleTest {
 
     @Test
     fun testExceptionFromCoroutine() {
-        val flux = GlobalScope.flux<String> {
-            error(Flux.just("O").awaitSingle() + "K")
+        val flux = flux<String> {
+            throw IllegalStateException(Flux.just("O").awaitSingle() + "K")
         }
 
         checkErroneous(flux) {
@@ -178,9 +182,9 @@ class FluxSingleTest {
 
     @Test
     fun testFluxIteration() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             var result = ""
-            Flux.just("O", "K").consumeEach { result += it }
+            Flux.just("O", "K").collect { result += it }
             send(result)
         }
 
@@ -191,9 +195,9 @@ class FluxSingleTest {
 
     @Test
     fun testFluxIterationFailure() {
-        val flux = GlobalScope.flux {
+        val flux = flux {
             try {
-                Flux.error<String>(RuntimeException("OK")).consumeEach { fail("Should not be here") }
+                Flux.error<String>(RuntimeException("OK")).collect { fail("Should not be here") }
                 send("Fail")
             } catch (e: RuntimeException) {
                 send(e.message!!)

@@ -1,11 +1,9 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
+package kotlinx.coroutines.guava
 
-package kotlinx.coroutines.experimental.guava
-
+import kotlinx.coroutines.testing.*
+import com.google.common.base.*
 import com.google.common.util.concurrent.*
-import kotlinx.coroutines.experimental.*
+import kotlinx.coroutines.*
 import org.junit.Test
 import java.io.*
 import java.util.concurrent.*
@@ -46,10 +44,8 @@ class ListenableFutureExceptionsTest : TestBase() {
         testException(TestException(), { it is TestException }, { i -> i!! + 1 })
     }
 
-    class TestException : CompletionException("test2")
-
     private fun testException(
-        exception: Exception,
+        exception: Throwable,
         expected: ((Throwable) -> Boolean),
         transformer: ((Int?) -> Int?)? = null
     ) {
@@ -57,11 +53,15 @@ class ListenableFutureExceptionsTest : TestBase() {
         // Fast path
         runTest {
             val future = SettableFuture.create<Int>()
-            val chained = if (transformer == null) future else Futures.transform(future, transformer)
+            val chained = if (transformer == null) {
+                future
+            } else {
+                Futures.transform(future, Function(transformer), MoreExecutors.directExecutor())
+            }
             future.setException(exception)
             try {
                 chained.await()
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 assertTrue(expected(e))
             }
         }
@@ -69,14 +69,18 @@ class ListenableFutureExceptionsTest : TestBase() {
         // Slow path
         runTest {
             val future = SettableFuture.create<Int>()
-            val chained = if (transformer == null) future else Futures.transform(future, transformer)
+            val chained = if (transformer == null) {
+                future
+            } else {
+                Futures.transform(future, Function(transformer), MoreExecutors.directExecutor())
+            }
             launch {
                 future.setException(exception)
             }
 
             try {
                 chained.await()
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 assertTrue(expected(e))
             }
         }

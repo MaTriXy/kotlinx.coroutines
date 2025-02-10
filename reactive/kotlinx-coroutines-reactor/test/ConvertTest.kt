@@ -1,25 +1,22 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
+package kotlinx.coroutines.reactor
 
-package kotlinx.coroutines.experimental.reactor
-
-import kotlinx.coroutines.experimental.*
-import kotlinx.coroutines.experimental.channels.*
-import kotlinx.coroutines.experimental.reactive.*
+import kotlinx.coroutines.testing.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.*
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.reactive.*
 import org.junit.*
-import org.junit.Assert.*
+import org.junit.Test
+import kotlin.test.*
 
 class ConvertTest : TestBase() {
-    class TestException(s: String): RuntimeException(s)
-
     @Test
     fun testJobToMonoSuccess() = runBlocking {
         expect(1)
         val job = launch {
             expect(3)
         }
-        val mono = job.asMono(coroutineContext)
+        val mono = job.asMono(coroutineContext.minusKey(Job))
         mono.subscribe {
             expect(4)
         }
@@ -31,11 +28,11 @@ class ConvertTest : TestBase() {
     @Test
     fun testJobToMonoFail() = runBlocking {
         expect(1)
-        val job = async(NonCancellable) { // don't kill parent on exception
+        val job = async(NonCancellable) {
             expect(3)
             throw RuntimeException("OK")
         }
-        val mono = job.asMono(coroutineContext)
+        val mono = job.asMono(coroutineContext.minusKey(Job))
         mono.subscribe(
                 { fail("no item should be emitted") },
                 { expect(4) }
@@ -68,24 +65,24 @@ class ConvertTest : TestBase() {
             null
         }
         val mono1 = d.asMono(Dispatchers.Unconfined)
-        checkMonoValue(mono1, ::assertNull)
+        checkMonoValue(mono1, Assert::assertNull)
         val mono2 = d.asMono(Dispatchers.Unconfined)
-        checkMonoValue(mono2, ::assertNull)
+        checkMonoValue(mono2, Assert::assertNull)
     }
 
     @Test
     fun testDeferredToMonoFail() {
         val d = GlobalScope.async {
             delay(50)
-            throw TestException("OK")
+            throw TestRuntimeException("OK")
         }
         val mono1 = d.asMono(Dispatchers.Unconfined)
         checkErroneous(mono1) {
-            check(it is TestException && it.message == "OK") { "$it" }
+            check(it is TestRuntimeException && it.message == "OK") { "$it" }
         }
         val mono2 = d.asMono(Dispatchers.Unconfined)
         checkErroneous(mono2) {
-            check(it is TestException && it.message == "OK") { "$it" }
+            check(it is TestRuntimeException && it.message == "OK") { "$it" }
         }
     }
 
@@ -97,7 +94,7 @@ class ConvertTest : TestBase() {
             delay(50)
             send("K")
         }
-        val flux = c.asFlux(Dispatchers.Unconfined)
+        val flux = c.consumeAsFlow().asFlux(Dispatchers.Unconfined)
         checkMonoValue(flux.reduce { t1, t2 -> t1 + t2 }) {
             assertEquals("OK", it)
         }
@@ -111,11 +108,11 @@ class ConvertTest : TestBase() {
             delay(50)
             throw TestException("K")
         }
-        val flux = c.asFlux(Dispatchers.Unconfined)
-        val mono = GlobalScope.mono(Dispatchers.Unconfined) {
+        val flux = c.consumeAsFlow().asFlux(Dispatchers.Unconfined)
+        val mono = mono(Dispatchers.Unconfined) {
             var result = ""
             try {
-                flux.consumeEach { result += it }
+                flux.collect { result += it }
             } catch(e: Throwable) {
                 check(e is TestException)
                 result += e.message

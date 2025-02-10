@@ -1,13 +1,10 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
+package kotlinx.coroutines.reactive
 
-package kotlinx.coroutines.experimental.reactive
-
-import kotlinx.coroutines.experimental.*
+import kotlinx.coroutines.testing.*
+import kotlinx.coroutines.*
 import org.junit.*
 import java.util.*
-import kotlin.coroutines.experimental.*
+import kotlin.coroutines.*
 
 class PublisherCompletionStressTest : TestBase() {
     private val N_REPEATS = 10_000 * stressTestMultiplier
@@ -24,7 +21,7 @@ class PublisherCompletionStressTest : TestBase() {
             runBlocking {
                 withTimeout(5000) {
                     var received = 0
-                    range(Dispatchers.Default, 1, count).consumeEach { x ->
+                    range(Dispatchers.Default, 1, count).collect { x ->
                         received++
                         if (x != received) error("$x != $received")
                     }

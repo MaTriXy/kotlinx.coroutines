@@ -1,12 +1,8 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
-
 package examples
 
-import kotlinx.coroutines.experimental.*
-import kotlinx.coroutines.experimental.future.*
-import kotlinx.coroutines.experimental.swing.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.future.*
+import kotlinx.coroutines.swing.*
 import java.awt.*
 import java.util.concurrent.*
 import javax.swing.*

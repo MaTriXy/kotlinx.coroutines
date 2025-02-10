@@ -1,69 +1,68 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
-
-package kotlinx.coroutines.experimental.rx2
+package kotlinx.coroutines.rx2
 
 import io.reactivex.*
-import io.reactivex.functions.*
-import kotlinx.coroutines.experimental.*
-import kotlin.coroutines.experimental.*
+import kotlinx.coroutines.*
+import kotlin.coroutines.*
 
 /**
- * Creates cold [single][Single] that will run a given [block] in a coroutine.
+ * Creates cold [single][Single] that will run a given [block] in a coroutine and emits its result.
  * Every time the returned observable is subscribed, it starts a new coroutine.
- * Coroutine returns a single value. Unsubscribing cancels running coroutine.
- *
- * | **Coroutine action**                  | **Signal to subscriber**
- * | ------------------------------------- | ------------------------
- * | Returns a value                       | `onSuccess`
- * | Failure with exception or unsubscribe | `onError`
- *
- * Coroutine context is inherited from a [CoroutineScope], additional context elements can be specified with [context] argument.
+ * Unsubscribing cancels running coroutine.
+ * Coroutine context can be specified with [context] argument.
  * If the context does not have any dispatcher nor any other [ContinuationInterceptor], then [Dispatchers.Default] is used.
- * The parent job is inherited from a [CoroutineScope] as well, but it can also be overridden
- * with corresponding [coroutineContext] element.
- *
- * @param context context of the coroutine.
- * @param block the coroutine code.
+ * Method throws [IllegalArgumentException] if provided [context] contains a [Job] instance.
  */
-public fun <T> CoroutineScope.rxSingle(
+public fun <T : Any> rxSingle(
     context: CoroutineContext = EmptyCoroutineContext,
     block: suspend CoroutineScope.() -> T
+): Single<T> {
+    require(context[Job] === null) { "Single context cannot contain job in it." +
+            "Its lifecycle should be managed via Disposable handle. Had $context" }
+    return rxSingleInternal(GlobalScope, context, block)
+}
+
+private fun <T : Any> rxSingleInternal(
+    scope: CoroutineScope, // support for legacy rxSingle in scope
+    context: CoroutineContext,
+    block: suspend CoroutineScope.() -> T
 ): Single<T> = Single.create { subscriber ->
-    val newContext = newCoroutineContext(context)
+    val newContext = scope.newCoroutineContext(context)
     val coroutine = RxSingleCoroutine(newContext, subscriber)
-    subscriber.setCancellable(coroutine)
+    subscriber.setCancellable(RxCancellable(coroutine))
     coroutine.start(CoroutineStart.DEFAULT, coroutine, block)
 }
 
-/**
- * Creates cold [single][Single] that will run a given [block] in a coroutine.
- * @suppress **Deprecated** Use [CoroutineScope.rxSingle] instead.
- */
-@Deprecated(
-    message = "Standalone coroutine builders are deprecated, use extensions on CoroutineScope instead",
-    replaceWith = ReplaceWith("GlobalScope.rxSingle(context, block)",
-        imports = ["kotlinx.coroutines.experimental.GlobalScope", "kotlinx.coroutines.experimental.rx2.rxSingle"])
-)
-public fun <T> rxSingle(
-    context: CoroutineContext = Dispatchers.Default,
-    parent: Job? = null,
-    block: suspend CoroutineScope.() -> T
-): Single<T> = GlobalScope.rxSingle(context + (parent ?: EmptyCoroutineContext), block)
-
-private class RxSingleCoroutine<T>(
+private class RxSingleCoroutine<T: Any>(
     parentContext: CoroutineContext,
     private val subscriber: SingleEmitter<T>
-) : AbstractCoroutine<T>(parentContext, true), Cancellable {
+) : AbstractCoroutine<T>(parentContext, false, true) {
     override fun onCompleted(value: T) {
-        if (!subscriber.isDisposed) subscriber.onSuccess(value)
+        try {
+            subscriber.onSuccess(value)
+        } catch (e: Throwable) {
+            handleUndeliverableException(e, context)
+        }
     }
 
-    override fun onCompletedExceptionally(exception: Throwable) {
-        if (!subscriber.isDisposed) subscriber.onError(exception)
+    override fun onCancelled(cause: Throwable, handled: Boolean) {
+        try {
+            if (subscriber.tryOnError(cause)) {
+                return
+            }
+        } catch (e: Throwable) {
+            cause.addSuppressed(e)
+        }
+        handleUndeliverableException(cause, context)
     }
-
-    // Cancellable impl
-    override fun cancel() { cancel(cause = null) }
 }
+
+/** @suppress */
+@Deprecated(
+    message = "CoroutineScope.rxSingle is deprecated in favour of top-level rxSingle",
+    level = DeprecationLevel.HIDDEN,
+    replaceWith = ReplaceWith("rxSingle(context, block)")
+) // Since 1.3.0, will be error in 1.3.1 and hidden in 1.4.0
+public fun <T : Any> CoroutineScope.rxSingle(
+    context: CoroutineContext = EmptyCoroutineContext,
+    block: suspend CoroutineScope.() -> T
+): Single<T> = rxSingleInternal(this, context, block)

@@ -1,55 +1,94 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
+package kotlinx.coroutines.reactor
 
-package kotlinx.coroutines.experimental.reactor
-
-import kotlinx.coroutines.experimental.*
-import kotlinx.coroutines.experimental.channels.*
-import kotlinx.coroutines.experimental.reactive.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.*
+import kotlinx.coroutines.reactive.*
+import org.reactivestreams.*
+import reactor.core.*
 import reactor.core.publisher.*
-import kotlin.coroutines.experimental.*
+import reactor.util.context.*
+import kotlin.coroutines.*
 
 /**
- * Creates cold reactive [Flux] that runs a given [block] in a coroutine.
+ * Creates a cold reactive [Flux] that runs the given [block] in a coroutine.
  * Every time the returned flux is subscribed, it starts a new coroutine in the specified [context].
- * Coroutine emits items with `send`. Unsubscribing cancels running coroutine.
+ * The coroutine emits ([Subscriber.onNext]) values with [send][ProducerScope.send], completes ([Subscriber.onComplete])
+ * when the coroutine completes, or, in case the coroutine throws an exception or the channel is closed,
+ * emits the error ([Subscriber.onError]) and closes the channel with the cause.
+ * Unsubscribing cancels the running coroutine.
  *
- * Coroutine context is inherited from a [CoroutineScope], additional context elements can be specified with [context] argument.
- * If the context does not have any dispatcher nor any other [ContinuationInterceptor], then [Dispatchers.Default] is used.
- * The parent job is inherited from a [CoroutineScope] as well, but it can also be overridden
- * with corresponding [coroutineContext] element.
+ * Invocations of [send][ProducerScope.send] are suspended appropriately when subscribers apply back-pressure and to
+ * ensure that [onNext][Subscriber.onNext] is not invoked concurrently.
  *
- * Invocations of `send` are suspended appropriately when subscribers apply back-pressure and to ensure that
- * `onNext` is not invoked concurrently.
+ * **Note: This is an experimental api.** Behaviour of publishers that work as children in a parent scope with respect
+ *        to cancellation and error handling may change in the future.
  *
- * | **Coroutine action**                         | **Signal to subscriber**
- * | -------------------------------------------- | ------------------------
- * | `send`                                       | `onNext`
- * | Normal completion or `close` without cause   | `onComplete`
- * | Failure with exception or `close` with cause | `onError`
+ * @throws IllegalArgumentException if the provided [context] contains a [Job] instance.
  */
-fun <T> CoroutineScope.flux(
+public fun <T> flux(
     context: CoroutineContext = EmptyCoroutineContext,
-    block: suspend ProducerScope<T>.() -> Unit
-): Flux<T> =
-    Flux.from(publish(newCoroutineContext(context), block = block))
+    @BuilderInference block: suspend ProducerScope<T>.() -> Unit
+): Flux<T> {
+    require(context[Job] === null) { "Flux context cannot contain job in it." +
+        "Its lifecycle should be managed via Disposable handle. Had $context" }
+    return Flux.from(reactorPublish(GlobalScope, context, block))
+}
 
+private fun <T> reactorPublish(
+    scope: CoroutineScope,
+    context: CoroutineContext = EmptyCoroutineContext,
+    @BuilderInference block: suspend ProducerScope<T>.() -> Unit
+): Publisher<T> = Publisher onSubscribe@{ subscriber: Subscriber<in T>? ->
+    if (subscriber !is CoreSubscriber) {
+        subscriber.reject(IllegalArgumentException("Subscriber is not an instance of CoreSubscriber, context can not be extracted."))
+        return@onSubscribe
+    }
+    val currentContext = subscriber.currentContext()
+    val reactorContext = context.extendReactorContext(currentContext)
+    val newContext = scope.newCoroutineContext(context + reactorContext)
+    val coroutine = PublisherCoroutine(newContext, subscriber, REACTOR_HANDLER)
+    subscriber.onSubscribe(coroutine) // do it first (before starting coroutine), to avoid unnecessary suspensions
+    coroutine.start(CoroutineStart.DEFAULT, coroutine, block)
+}
+
+private val REACTOR_HANDLER: (Throwable, CoroutineContext) -> Unit = { cause, ctx ->
+    if (cause !is CancellationException) {
+        try {
+            Operators.onOperatorError(cause, ctx[ReactorContext]?.context ?: Context.empty())
+        } catch (e: Throwable) {
+            cause.addSuppressed(e)
+            handleCoroutineException(ctx, cause)
+        }
+    }
+}
+
+/** The proper way to reject the subscriber, according to
+ * [the reactive spec](https://github.com/reactive-streams/reactive-streams-jvm/blob/v1.0.3/README.md#1.9)
+ */
+private fun <T> Subscriber<T>?.reject(t: Throwable) {
+    if (this == null)
+        throw NullPointerException("The subscriber can not be null")
+    onSubscribe(object: Subscription {
+        override fun request(n: Long) {
+            // intentionally left blank
+        }
+        override fun cancel() {
+            // intentionally left blank
+        }
+    })
+    onError(t)
+}
 
 /**
- * Creates cold reactive [Flux] that runs a given [block] in a coroutine.
- * @suppress **Deprecated** Use [CoroutineScope.mono] instead.
+ * @suppress
  */
 @Deprecated(
-    message = "Standalone coroutine builders are deprecated, use extensions on CoroutineScope instead",
-    replaceWith = ReplaceWith(
-        "GlobalScope.flux(context, block)",
-        imports = ["kotlinx.coroutines.experimental.GlobalScope", "kotlinx.coroutines.experimental.reactor.flux"]
-    )
-)
-@JvmOverloads // for binary compatibility with older code compiled before context had a default
-fun <T> flux(
-    context: CoroutineContext = Dispatchers.Default,
-    block: suspend ProducerScope<T>.() -> Unit
+    message = "CoroutineScope.flux is deprecated in favour of top-level flux",
+    level = DeprecationLevel.HIDDEN,
+    replaceWith = ReplaceWith("flux(context, block)")
+) // Since 1.3.0, will be error in 1.3.1 and hidden in 1.4.0. Binary compatibility with Spring
+public fun <T> CoroutineScope.flux(
+    context: CoroutineContext = EmptyCoroutineContext,
+    @BuilderInference block: suspend ProducerScope<T>.() -> Unit
 ): Flux<T> =
-    GlobalScope.flux(context, block)
+    Flux.from(reactorPublish(this, context, block))

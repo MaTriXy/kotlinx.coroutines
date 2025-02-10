@@ -1,14 +1,11 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
+package kotlinx.coroutines.slf4j
 
-package kotlinx.coroutines.experimental.slf4j
-
-import kotlinx.coroutines.experimental.*
+import kotlinx.coroutines.testing.*
+import kotlinx.coroutines.*
 import org.junit.*
 import org.junit.Test
 import org.slf4j.*
-import kotlin.coroutines.experimental.*
+import kotlin.coroutines.*
 import kotlin.test.*
 
 class MDCContextTest : TestBase() {
@@ -28,7 +25,7 @@ class MDCContextTest : TestBase() {
         MDC.put("myKey", "myValue")
         // Standalone launch
         GlobalScope.launch {
-            assertEquals(null, MDC.get("myKey"))
+            assertNull(MDC.get("myKey"))
             expect(2)
         }.join()
         finish(3)
@@ -92,19 +89,56 @@ class MDCContextTest : TestBase() {
     @Test
     fun testContextMayBeEmpty() {
         runBlocking(MDCContext()) {
-            assertEquals(null, MDC.get("myKey"))
+            assertNull(MDC.get("myKey"))
         }
     }
 
     @Test
     fun testContextWithContext() = runTest {
         MDC.put("myKey", "myValue")
-        val mainDispatcher = kotlin.coroutines.experimental.coroutineContext[ContinuationInterceptor]!!
+        val mainDispatcher = kotlin.coroutines.coroutineContext[ContinuationInterceptor]!!
         withContext(Dispatchers.Default + MDCContext()) {
             assertEquals("myValue", MDC.get("myKey"))
+            assertEquals("myValue", coroutineContext[MDCContext]?.contextMap?.get("myKey"))
             withContext(mainDispatcher) {
                 assertEquals("myValue", MDC.get("myKey"))
             }
         }
+    }
+
+    /** Tests that the initially captured MDC context gets restored after suspension. */
+    @Test
+    fun testSuspensionsUndoingMdcContextUpdates() = runTest {
+        MDC.put("a", "b")
+        withContext(MDCContext()) {
+            MDC.put("key", "value")
+            assertEquals("b", MDC.get("a"))
+            yield()
+            assertNull(MDC.get("key"))
+            assertEquals("b", MDC.get("a"))
+        }
+    }
+
+    /** Tests capturing and restoring the MDC context. */
+    @Test
+    fun testRestoringMdcContext() = runTest {
+        MDC.put("a", "b")
+        val contextMap = withContext(MDCContext()) {
+            MDC.put("key", "value")
+            assertEquals("b", MDC.get("a"))
+            withContext(MDCContext()) {
+                assertEquals("value", MDC.get("key"))
+                MDC.put("key2", "value2")
+                assertEquals("value2", MDC.get("key2"))
+                withContext(MDCContext()) {
+                    yield()
+                    MDC.getCopyOfContextMap()
+                }
+            }
+        }
+        MDC.setContextMap(contextMap)
+        assertEquals("value2", MDC.get("key2"))
+        assertEquals("value", MDC.get("key"))
+        assertEquals("b", MDC.get("a"))
     }
 }

@@ -1,32 +1,51 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
+package kotlinx.coroutines.reactive
 
-package kotlinx.coroutines.experimental.reactive
-
-import kotlinx.coroutines.experimental.*
-import org.hamcrest.core.*
-import org.junit.*
-import org.junit.Assert.*
+import kotlinx.coroutines.testing.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.selects.*
+import org.junit.Test
+import kotlin.test.*
 
 class PublisherMultiTest : TestBase() {
     @Test
     fun testConcurrentStress() = runBlocking {
         val n = 10_000 * stressTestMultiplier
-        val observable = GlobalScope.publish {
+        val observable = publish {
             // concurrent emitters (many coroutines)
             val jobs = List(n) {
                 // launch
-                launch {
+                launch(Dispatchers.Default) {
                     send(it)
                 }
             }
             jobs.forEach { it.join() }
         }
         val resultSet = mutableSetOf<Int>()
-        observable.consumeEach {
+        observable.collect {
             assertTrue(resultSet.add(it))
         }
-        assertThat(resultSet.size, IsEqual(n))
+        assertEquals(n, resultSet.size)
+    }
+
+    @Test
+    fun testConcurrentStressOnSend() = runBlocking {
+        val n = 10_000 * stressTestMultiplier
+        val observable = publish<Int> {
+            // concurrent emitters (many coroutines)
+            val jobs = List(n) {
+                // launch
+                launch(Dispatchers.Default) {
+                    select<Unit> {
+                        onSend(it) {}
+                    }
+                }
+            }
+            jobs.forEach { it.join() }
+        }
+        val resultSet = mutableSetOf<Int>()
+        observable.collect {
+            assertTrue(resultSet.add(it))
+        }
+        assertEquals(n, resultSet.size)
     }
 }

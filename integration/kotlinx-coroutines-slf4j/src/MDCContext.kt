@@ -1,13 +1,9 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
+package kotlinx.coroutines.slf4j
 
-package kotlinx.coroutines.experimental.slf4j
-
-import kotlinx.coroutines.experimental.*
+import kotlinx.coroutines.*
 import org.slf4j.MDC
-import kotlin.coroutines.experimental.AbstractCoroutineContextElement
-import kotlin.coroutines.experimental.CoroutineContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 /**
  * The value of [MDC] context map.
@@ -28,12 +24,51 @@ public typealias MDCContextMap = Map<String, String>?
  * }
  * ```
  *
- * Note, that you cannot update MDC context from inside of the coroutine simply
+ * Note that you cannot update MDC context from inside the coroutine simply
  * using [MDC.put]. These updates are going to be lost on the next suspension and
  * reinstalled to the MDC context that was captured or explicitly specified in
  * [contextMap] when this object was created on the next resumption.
- * Use `withContext(MDCContext()) { ... }` to capture updated map of MDC keys and values
- * for the specified block of code.
+ *
+ * For example, the following code will not work as expected:
+ *
+ * ```
+ * launch(MDCContext()) {
+ *     MDC.put("key", "value") // This update will be lost
+ *     delay(100)
+ *     println(MDC.get("key")) // This will print null
+ * }
+ * ```
+ *
+ * Instead, you should use [withContext] to capture the updated MDC context:
+ *
+ * ```
+ * launch(MDCContext()) {
+ *     MDC.put("key", "value") // This update will be captured
+ *     withContext(MDCContext()) {
+ *         delay(100)
+ *         println(MDC.get("key")) // This will print "value"
+ *     }
+ * }
+ * ```
+ *
+ * There is no way to implicitly propagate MDC context updates from inside the coroutine to the outer scope.
+ * You have to capture the updated MDC context and restore it explicitly. For example:
+ *
+ * ```
+ * MDC.put("a", "b")
+ * val contextMap = withContext(MDCContext()) {
+ *     MDC.put("key", "value")
+ *     withContext(MDCContext()) {
+ *         MDC.put("key2", "value2")
+ *         withContext(MDCContext()) {
+ *             yield()
+ *             MDC.getCopyOfContextMap()
+ *         }
+ *     }
+ * }
+ * // contextMap contains: {"a"="b", "key"="value", "key2"="value2"}
+ * MDC.setContextMap(contextMap)
+ * ```
  *
  * @param contextMap the value of [MDC] context map.
  * Default value is the copy of the current thread's context map that is acquired via
@@ -43,19 +78,22 @@ public class MDCContext(
     /**
      * The value of [MDC] context map.
      */
+    @Suppress("MemberVisibilityCanBePrivate")
     public val contextMap: MDCContextMap = MDC.getCopyOfContextMap()
 ) : ThreadContextElement<MDCContextMap>, AbstractCoroutineContextElement(Key) {
     /**
      * Key of [MDCContext] in [CoroutineContext].
      */
-    companion object Key : CoroutineContext.Key<MDCContext>
+    public companion object Key : CoroutineContext.Key<MDCContext>
 
+    /** @suppress */
     override fun updateThreadContext(context: CoroutineContext): MDCContextMap {
         val oldState = MDC.getCopyOfContextMap()
         setCurrent(contextMap)
         return oldState
     }
 
+    /** @suppress */
     override fun restoreThreadContext(context: CoroutineContext, oldState: MDCContextMap) {
         setCurrent(oldState)
     }

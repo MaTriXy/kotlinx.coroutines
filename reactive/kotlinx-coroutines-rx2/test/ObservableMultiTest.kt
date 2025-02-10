@@ -1,14 +1,12 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
+package kotlinx.coroutines.rx2
 
-package kotlinx.coroutines.experimental.rx2
-
+import kotlinx.coroutines.testing.*
 import io.reactivex.*
-import kotlinx.coroutines.experimental.*
-import org.junit.*
-import org.junit.Assert.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.selects.*
+import org.junit.Test
 import java.io.*
+import kotlin.test.*
 
 /**
  * Test emitting multiple values with [rxObservable].
@@ -17,7 +15,7 @@ class ObservableMultiTest : TestBase() {
     @Test
     fun testNumbers() {
         val n = 100 * stressTestMultiplier
-        val observable = GlobalScope.rxObservable {
+        val observable = rxObservable {
             repeat(n) { send(it) }
         }
         checkSingleValue(observable.toList()) { list ->
@@ -25,15 +23,41 @@ class ObservableMultiTest : TestBase() {
         }
     }
 
+
     @Test
     fun testConcurrentStress() {
         val n = 10_000 * stressTestMultiplier
-        val observable = GlobalScope.rxObservable {
+        val observable = rxObservable {
+            newCoroutineContext(coroutineContext)
             // concurrent emitters (many coroutines)
             val jobs = List(n) {
                 // launch
                 launch {
-                    send(it)
+                    val i = it
+                    send(i)
+                }
+            }
+            jobs.forEach { it.join() }
+        }
+        checkSingleValue(observable.toList()) { list ->
+            assertEquals(n, list.size)
+            assertEquals((0 until n).toList(), list.sorted())
+        }
+    }
+
+    @Test
+    fun testConcurrentStressOnSend() {
+        val n = 10_000 * stressTestMultiplier
+        val observable = rxObservable<Int> {
+            newCoroutineContext(coroutineContext)
+            // concurrent emitters (many coroutines)
+            val jobs = List(n) {
+                // launch
+                launch(Dispatchers.Default) {
+                    val i = it
+                    select<Unit> {
+                        onSend(i) {}
+                    }
                 }
             }
             jobs.forEach { it.join() }
@@ -47,8 +71,8 @@ class ObservableMultiTest : TestBase() {
     @Test
     fun testIteratorResendUnconfined() {
         val n = 10_000 * stressTestMultiplier
-        val observable = GlobalScope.rxObservable(Dispatchers.Unconfined) {
-            Observable.range(0, n).consumeEach { send(it) }
+        val observable = rxObservable(Dispatchers.Unconfined) {
+            Observable.range(0, n).collect { send(it) }
         }
         checkSingleValue(observable.toList()) { list ->
             assertEquals((0 until n).toList(), list)
@@ -58,8 +82,8 @@ class ObservableMultiTest : TestBase() {
     @Test
     fun testIteratorResendPool() {
         val n = 10_000 * stressTestMultiplier
-        val observable = GlobalScope.rxObservable {
-            Observable.range(0, n).consumeEach { send(it) }
+        val observable = rxObservable {
+            Observable.range(0, n).collect { send(it) }
         }
         checkSingleValue(observable.toList()) { list ->
             assertEquals((0 until n).toList(), list)
@@ -68,14 +92,14 @@ class ObservableMultiTest : TestBase() {
 
     @Test
     fun testSendAndCrash() {
-        val observable = GlobalScope.rxObservable {
+        val observable = rxObservable {
             send("O")
             throw IOException("K")
         }
-        val single = GlobalScope.rxSingle {
+        val single = rxSingle {
             var result = ""
             try {
-                observable.consumeEach { result += it }
+                observable.collect { result += it }
             } catch(e: IOException) {
                 result += e.message
             }

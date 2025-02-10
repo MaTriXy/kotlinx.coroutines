@@ -1,34 +1,37 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
+package kotlinx.coroutines.reactor
 
-package kotlinx.coroutines.experimental.reactor
-
-import kotlinx.coroutines.experimental.*
-import kotlinx.coroutines.experimental.reactive.*
-import org.hamcrest.core.*
+import kotlinx.coroutines.testing.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.reactive.*
 import org.junit.*
-import org.junit.Assert.*
+import org.junit.Test
+import org.reactivestreams.*
 import reactor.core.publisher.*
+import reactor.util.context.*
 import java.time.Duration.*
+import java.util.function.*
+import kotlin.test.*
 
 class MonoTest : TestBase() {
     @Before
     fun setup() {
         ignoreLostThreads("timer-", "parallel-")
+        Hooks.onErrorDropped { expectUnreached() }
     }
 
     @Test
     fun testBasicSuccess() = runBlocking {
         expect(1)
-        val mono = mono {
+        val mono = mono(currentDispatcher()) {
             expect(4)
             "OK"
         }
         expect(2)
         mono.subscribe { value ->
             expect(5)
-            Assert.assertThat(value, IsEqual("OK"))
+            assertEquals("OK", value)
         }
         expect(3)
         yield() // to started coroutine
@@ -38,7 +41,7 @@ class MonoTest : TestBase() {
     @Test
     fun testBasicFailure() = runBlocking {
         expect(1)
-        val mono = mono {
+        val mono = mono(currentDispatcher()) {
             expect(4)
             throw RuntimeException("OK")
         }
@@ -47,8 +50,8 @@ class MonoTest : TestBase() {
             expectUnreached()
         }, { error ->
             expect(5)
-            Assert.assertThat(error, IsInstanceOf(RuntimeException::class.java))
-            Assert.assertThat(error.message, IsEqual("OK"))
+            assertIs<RuntimeException>(error)
+            assertEquals("OK", error.message)
         })
         expect(3)
         yield() // to started coroutine
@@ -58,7 +61,7 @@ class MonoTest : TestBase() {
     @Test
     fun testBasicEmpty() = runBlocking {
         expect(1)
-        val mono = mono {
+        val mono = mono(currentDispatcher()) {
             expect(4)
             null
         }
@@ -74,7 +77,7 @@ class MonoTest : TestBase() {
     @Test
     fun testBasicUnsubscribe() = runBlocking {
         expect(1)
-        val mono = mono {
+        val mono = mono(currentDispatcher()) {
             expect(4)
             yield() // back to main, will get cancelled
             expectUnreached()
@@ -96,7 +99,7 @@ class MonoTest : TestBase() {
 
     @Test
     fun testMonoNoWait() {
-        val mono = GlobalScope.mono {
+        val mono = mono {
             "OK"
         }
 
@@ -108,11 +111,34 @@ class MonoTest : TestBase() {
     @Test
     fun testMonoAwait() = runBlocking {
         assertEquals("OK", Mono.just("O").awaitSingle() + "K")
+        assertEquals("OK", Mono.just("O").awaitSingleOrNull() + "K")
+        assertFailsWith<NoSuchElementException>{ Mono.empty<String>().awaitSingle() }
+        assertNull(Mono.empty<Int>().awaitSingleOrNull())
+    }
+
+    /** Tests that calls to [awaitSingleOrNull] (and, thus, to the rest of such functions) throw [CancellationException]
+     * and unsubscribe from the publisher when their [Job] is cancelled. */
+    @Test
+    fun testAwaitCancellation() = runTest {
+        expect(1)
+        val mono = mono { delay(Long.MAX_VALUE) }.doOnSubscribe { expect(3) }.doOnCancel { expect(5) }
+        val job = launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                expect(2)
+                mono.awaitSingleOrNull()
+            } catch (e: CancellationException) {
+                expect(6)
+                throw e
+            }
+        }
+        expect(4)
+        job.cancelAndJoin()
+        finish(7)
     }
 
     @Test
     fun testMonoEmitAndAwait() {
-        val mono = GlobalScope.mono {
+        val mono = mono {
             Mono.just("O").awaitSingle() + "K"
         }
 
@@ -123,7 +149,7 @@ class MonoTest : TestBase() {
 
     @Test
     fun testMonoWithDelay() {
-        val mono = GlobalScope.mono {
+        val mono = mono {
             Flux.just("O").delayElements(ofMillis(50)).awaitSingle() + "K"
         }
 
@@ -134,7 +160,7 @@ class MonoTest : TestBase() {
 
     @Test
     fun testMonoException() {
-        val mono = GlobalScope.mono {
+        val mono = mono {
             Flux.just("O", "K").awaitSingle() + "K"
         }
 
@@ -145,7 +171,7 @@ class MonoTest : TestBase() {
 
     @Test
     fun testAwaitFirst() {
-        val mono = GlobalScope.mono {
+        val mono = mono {
             Flux.just("O", "#").awaitFirst() + "K"
         }
 
@@ -156,7 +182,7 @@ class MonoTest : TestBase() {
 
     @Test
     fun testAwaitLast() {
-        val mono = GlobalScope.mono {
+        val mono = mono {
             Flux.just("#", "O").awaitLast() + "K"
         }
 
@@ -167,7 +193,7 @@ class MonoTest : TestBase() {
 
     @Test
     fun testExceptionFromFlux() {
-        val mono = GlobalScope.mono {
+        val mono = mono {
             try {
                 Flux.error<String>(RuntimeException("O")).awaitFirst()
             } catch (e: RuntimeException) {
@@ -182,7 +208,7 @@ class MonoTest : TestBase() {
 
     @Test
     fun testExceptionFromCoroutine() {
-        val mono = GlobalScope.mono<String> {
+        val mono = mono<String> {
             throw IllegalStateException(Flux.just("O").awaitSingle() + "K")
         }
 
@@ -190,5 +216,189 @@ class MonoTest : TestBase() {
             assert(it is IllegalStateException)
             assertEquals("OK", it.message)
         }
+    }
+
+    @Test
+    fun testSuppressedException() = runTest {
+        val mono = mono(currentDispatcher()) {
+            launch(start = CoroutineStart.ATOMIC) {
+                throw TestException() // child coroutine fails
+            }
+            try {
+                delay(Long.MAX_VALUE)
+            } finally {
+                throw TestException2() // but parent throws another exception while cleaning up
+            }
+        }
+        try {
+            mono.awaitSingle()
+            expectUnreached()
+        } catch (e: TestException) {
+            assertIs<TestException2>(e.suppressed[0])
+        }
+    }
+
+    @Test
+    fun testUnhandledException() = runTest {
+        expect(1)
+        var subscription: Subscription? = null
+        val handler = BiFunction<Throwable, Any?, Throwable> { t, _ ->
+            assertIs<TestException>(t)
+            expect(5)
+            t
+        }
+
+        val mono = mono(currentDispatcher()) {
+            expect(4)
+            subscription!!.cancel() // cancel our own subscription, so that delay will get cancelled
+            try {
+                delay(Long.MAX_VALUE)
+            } finally {
+                throw TestException() // would not be able to handle it since mono is disposed
+            }
+        }.contextWrite { Context.of("reactor.onOperatorError.local", handler) }
+        mono.subscribe(object : Subscriber<Unit> {
+            override fun onSubscribe(s: Subscription) {
+                expect(2)
+                subscription = s
+            }
+            override fun onNext(t: Unit?) { expectUnreached() }
+            override fun onComplete() { expectUnreached() }
+            override fun onError(t: Throwable) { expectUnreached() }
+        })
+        expect(3)
+        yield() // run coroutine
+        finish(6)
+    }
+
+    @Test
+    fun testIllegalArgumentException() {
+        assertFailsWith<IllegalArgumentException> { mono(Job()) { } }
+    }
+
+    @Test
+    fun testExceptionAfterCancellation() = runTest {
+        // Test exception is not reported to global handler
+        Flux
+            .interval(ofMillis(1))
+            .switchMap {
+                mono(coroutineContext) {
+                    timeBomb().awaitSingle()
+                }
+            }
+            .onErrorReturn({
+                expect(1)
+                true
+            }, 42)
+            .blockLast()
+        finish(2)
+    }
+
+    private fun timeBomb() = Mono.delay(ofMillis(1)).doOnSuccess { throw Exception("something went wrong") }
+
+    @Test
+    fun testLeakedException() = runBlocking {
+        // Test exception is not reported to global handler
+        val flow = mono<Unit> { throw TestException() }.toFlux().asFlow()
+        repeat(10000) {
+            combine(flow, flow) { _, _ -> }
+                .catch {}
+                .collect { }
+        }
+    }
+
+    /** Test that cancelling a [mono] due to a timeout does throw an exception. */
+    @Test
+    fun testTimeout() {
+        val mono = mono {
+            withTimeout(1) { delay(100) }
+        }
+        try {
+            mono.doOnSubscribe { expect(1) }
+                .doOnNext { expectUnreached() }
+                .doOnSuccess { expectUnreached() }
+                .doOnError { expect(2) }
+                .doOnCancel { expectUnreached() }
+                .block()
+        } catch (e: CancellationException) {
+            expect(3)
+        }
+        finish(4)
+    }
+
+    /** Test that when the reason for cancellation of a [mono] is that the downstream doesn't want its results anymore,
+     * this is considered normal behavior and exceptions are not propagated. */
+    @Test
+    fun testDownstreamCancellationDoesNotThrow() = runTest {
+        var i = 0
+        /** Attach a hook that handles exceptions from publishers that are known to be disposed of. We don't expect it
+         * to be fired in this case, as the reason for the publisher in this test to accept an exception is simply
+         * cancellation from the downstream. */
+        Hooks.onOperatorError("testDownstreamCancellationDoesNotThrow") { t, a ->
+            expectUnreached()
+            t
+        }
+        /** A Mono that doesn't emit a value and instead waits indefinitely. */
+        val mono = mono(Dispatchers.Unconfined) { expect(5 * i + 3); delay(Long.MAX_VALUE) }
+            .doOnSubscribe { expect(5 * i + 2) }
+            .doOnNext { expectUnreached() }
+            .doOnSuccess { expectUnreached() }
+            .doOnError { expectUnreached() }
+            .doOnCancel { expect(5 * i + 4) }
+        val n = 1000
+        repeat(n) {
+            i = it
+            expect(5 * i + 1)
+            mono.awaitCancelAndJoin()
+            expect(5 * i + 5)
+        }
+        finish(5 * n + 1)
+        Hooks.resetOnOperatorError("testDownstreamCancellationDoesNotThrow")
+    }
+
+    /** Test that, when [Mono] is cancelled by the downstream and throws during handling the cancellation, the resulting
+     * error is propagated to [Hooks.onOperatorError]. */
+    @Test
+    fun testRethrowingDownstreamCancellation() = runTest {
+        var i = 0
+        /** Attach a hook that handles exceptions from publishers that are known to be disposed of. We expect it
+         * to be fired in this case. */
+        Hooks.onOperatorError("testDownstreamCancellationDoesNotThrow") { t, a ->
+            expect(i * 6 + 5)
+            t
+        }
+        /** A Mono that doesn't emit a value and instead waits indefinitely, and, when cancelled, throws. */
+        val mono = mono(Dispatchers.Unconfined) {
+            expect(i * 6 + 3)
+            try {
+                delay(Long.MAX_VALUE)
+            } catch (e: CancellationException) {
+                throw TestException()
+            }
+        }
+            .doOnSubscribe { expect(i * 6 + 2) }
+            .doOnNext { expectUnreached() }
+            .doOnSuccess { expectUnreached() }
+            .doOnError { expectUnreached() }
+            .doOnCancel { expect(i * 6 + 4) }
+        val n = 1000
+        repeat(n) {
+            i = it
+            expect(i * 6 + 1)
+            mono.awaitCancelAndJoin()
+            expect(i * 6 + 6)
+        }
+        finish(n * 6 + 1)
+        Hooks.resetOnOperatorError("testDownstreamCancellationDoesNotThrow")
+    }
+
+    /** Run the given [Mono], cancel it, wait for the cancellation handler to finish, and return only then.
+     *
+     * Will not work in the general case, but here, when the publisher uses [Dispatchers.Unconfined], this seems to
+     * ensure that the cancellation handler will have nowhere to execute but serially with the cancellation. */
+    private suspend fun <T> Mono<T>.awaitCancelAndJoin() = coroutineScope {
+        async(start = CoroutineStart.UNDISPATCHED) {
+            awaitSingleOrNull()
+        }.cancelAndJoin()
     }
 }
